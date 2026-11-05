@@ -1,5 +1,7 @@
 # AI Bricks
 
+Bricked up AI
+
 Design a neural network from typed, composable bricks. AI Bricks validates the build, tests it
 on sample data and generates a readable PyTorch project to train on your own data.
 
