@@ -49,7 +49,13 @@ Each dataset has four tabs:
 - **Versions** saves your data and labels so you can compare or restore them. Restoring saves any unsaved work as a new version first.
 - **Models** lists what was trained on this data, with the data version and score of each, and downloads for the newest 10.
 
-Training saves a version automatically when the data has changed, then trains on a frozen copy of it. Text datasets have versions too, but they train from the export, so they aren't linked to models yet.
+Training saves a version automatically when the data has changed, then trains on a frozen copy of it.
+
+## Train a text sorter
+
+Open a text dataset, go to **Models** and press **Start training**. It needs at least 4 labelled examples per category. You can then try the model, fix labels on its mistakes and download it as a project that runs on its own.
+
+It follows the [SetFit](https://arxiv.org/abs/2209.11055) method, written directly on PyTorch and Transformers rather than using the `setfit` package: it fine-tunes the small `sentence-transformers/all-MiniLM-L6-v2` model, then trains a classifier on top. The first run downloads the base model, about 90 MB, from Hugging Face. Your text isn't sent anywhere. This model is separate from the block designs on the canvas, which still train text from the export.
 
 Versions share files with the dataset, so they take little extra disk space. Examples removed from a dataset stay in older versions until you delete those versions, which erases them from the app. A trained model can still reflect what it learned from them.
 

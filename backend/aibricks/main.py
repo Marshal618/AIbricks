@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, training, versions
+from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, textmodels, training, versions
 
 
 @contextlib.asynccontextmanager
@@ -192,8 +192,8 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training() -> dict:
-    return {"job": training.public(training.current())}
+def get_training(kind: Literal["image", "text"] | None = None) -> dict:
+    return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
 @app.post("/api/train")
@@ -587,3 +587,30 @@ def list_dataset_models(dataset_id: str) -> dict:
 @app.delete("/api/models/{job_id}")
 def delete_saved_model(job_id: str) -> dict:
     return _labelled(training.delete_model, job_id)
+
+
+# ------------------------------------------------------------------- text models
+
+class TextToTry(BaseModel):
+    text: str = Field(min_length=1, max_length=labelling.MAX_TEXT_LENGTH)
+
+
+@app.post("/api/datasets/{dataset_id}/train-text", dependencies=[Depends(_needs_json)])
+def train_text_model(dataset_id: str) -> dict:
+    try:
+        return {"job": training.public(textmodels.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.post("/api/models/{job_id}/try")
+def try_text_model(job_id: str, request: TextToTry) -> dict:
+    try:
+        return {"answers": textmodels.try_text(job_id, request.text)}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/mistakes")
+def text_model_mistakes(job_id: str) -> dict:
+    return _dataset_reply(textmodels.mistakes, job_id)

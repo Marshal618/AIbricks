@@ -6,6 +6,7 @@ they're removed from the dataset, until that version is deleted.
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import shutil
@@ -210,7 +211,18 @@ def compare(dataset: str, number: int) -> dict:
         return _difference(_items_of(dataset, number), _current_items(dataset, meta, extra), version["categories"], meta["categories"])
 
 
-def freeze(dataset: str, names: list[str], target: Path) -> int:
+def _freeze_text(dataset: str, names: list[str], items: Items, run: Path) -> None:
+    """Writes the labelled text for one run, in the same format as the dataset's export."""
+    with closing(_texts(dataset)) as store:
+        texts = dict(store.execute("SELECT id, text FROM texts"))
+    wanted = set(names)
+    with open(run / "data" / "texts.csv", "w", encoding="utf-8", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["text", "label"])
+        writer.writerows((texts[item_id], label) for item_id, label in items if label in wanted)
+
+
+def freeze(dataset: str, names: list[str], run: Path) -> int:
     """Makes sure a version matches the dataset, and copies its examples for one training run."""
     with training._lock:
         meta = datasets._read(dataset)
@@ -220,16 +232,20 @@ def freeze(dataset: str, names: list[str], target: Path) -> int:
             version = _save(dataset, meta, index, items, "Saved automatically for training", True)
         else:
             version = _head(index)
-        objects = _folder(dataset) / "objects"
-        for name in names:
-            (target / name).mkdir(parents=True, exist_ok=True)
-        wanted = set(names)
-        for item_id, label in items:
-            if label in wanted:
-                _link(objects / item_id, target / label / item_id)
+        if meta["kind"] == "text":
+            _freeze_text(dataset, names, items, run)
+        else:
+            target = run / "data" / "images"
+            objects = _folder(dataset) / "objects"
+            for name in names:
+                (target / name).mkdir(parents=True, exist_ok=True)
+            wanted = set(names)
+            for item_id, label in items:
+                if label in wanted:
+                    _link(objects / item_id, target / label / item_id)
         credit = opendata.credits_markdown(version["sources"])
         if credit:
-            (target.parents[1] / CREDITS_FILE).write_text(credit, encoding="utf-8")
+            (run / CREDITS_FILE).write_text(credit, encoding="utf-8")
         return version["number"]
 
 

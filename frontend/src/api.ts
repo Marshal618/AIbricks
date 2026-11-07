@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, SavedModel, TestEvent, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, SavedModel, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -91,8 +91,8 @@ export async function clearImages(category: string, dataset: string) {
   if (!response.ok) throw new Error(await errorMessage(response));
 }
 
-export async function fetchTraining(): Promise<TrainingJob | null> {
-  const response = await fetch("/api/train/current");
+export async function fetchTraining(kind?: "image" | "text"): Promise<TrainingJob | null> {
+  const response = await fetch(kind ? `/api/train/current?${new URLSearchParams({ kind })}` : "/api/train/current");
   if (!response.ok) throw new Error(await errorMessage(response));
   return (await response.json()).job;
 }
@@ -325,3 +325,13 @@ export async function fetchDatasetModels(id: string): Promise<SavedModel[]> {
 }
 
 export const deleteSavedModel = (job: string) => send(`/api/models/${job}`, "DELETE");
+
+export async function trainTextModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-text`);
+}
+
+export async function tryTextModel(job: string, text: string): Promise<PredictAnswer[]> {
+  return (await sendJson(`/api/models/${job}/try`, { text })).answers;
+}
+
+export const fetchTextMistakes = (job: string): Promise<{ mistakes: TextMistake[]; total: number }> => getJson(`/api/models/${job}/mistakes`);

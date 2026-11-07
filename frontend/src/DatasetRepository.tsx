@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
-import type { DatasetPreview, DatasetSummary, SavedModel, VersionChanges, VersionOverview } from "./types";
+import type { DatasetPreview, DatasetSummary, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
 
@@ -251,18 +251,194 @@ function megabytes(bytes: number) {
   return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function DatasetModels({ dataset, beginner, onBuild }: { dataset: DatasetSummary; beginner: boolean; onBuild: () => void }) {
+const TEXT_MINIMUM = 4;
+const TEXT_SUGGESTED = 16;
+
+function TextTrainer({ dataset, beginner, running, busyElsewhere, onStart, onStop }: { dataset: DatasetSummary; beginner: boolean; running: SavedModel | null; busyElsewhere: boolean; onStart: () => void; onStop: (id: string) => void }) {
+  const short = dataset.categories.filter((name) => (dataset.counts[name] ?? 0) < TEXT_MINIMUM);
+  const ready = dataset.categories.length >= 2 && short.length === 0;
+  const few = ready && dataset.categories.some((name) => (dataset.counts[name] ?? 0) < TEXT_SUGGESTED);
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>Train a text sorter</h2>
+        {running
+          ? <button className="button button-small" onClick={() => onStop(running.id)}>Stop</button>
+          : <button className="button button-small button-primary" disabled={!ready || busyElsewhere} onClick={onStart}>Start training</button>}
+      </div>
+      <p className="muted small">
+        {beginner
+          ? "This adapts a small pretrained language model to your categories, so it works with few examples. Training runs on this computer and your text isn't sent anywhere."
+          : "Uses the SetFit method: fine-tunes all-MiniLM-L6-v2 on contrastive pairs, then fits a linear classifier. Training is local."}
+      </p>
+      {running && (
+        <div className="field-note" role="status">
+          <progress className="train-progress" max={running.stepsTotal || 1} value={running.stepsDone} aria-label="Training progress" />
+          <p className="muted small">
+            {!running.device
+              ? "Getting the base model ready. The first run downloads about 90 MB from Hugging Face. Your text stays here."
+              : running.stage === "reviewing"
+                ? "Checking the held-back examples…"
+                : `Step ${running.stepsDone.toLocaleString()} of ${(running.stepsTotal || 0).toLocaleString()}, using ${running.device}. This can be left running.`}
+          </p>
+        </div>
+      )}
+      {!running && busyElsewhere && <p className="muted small field-note">Another model is training. Only one can train at a time.</p>}
+      {!running && dataset.categories.length < 2 && <p className="muted small field-note">Add at least 2 categories on the Label tab.</p>}
+      {!running && dataset.categories.length >= 2 && short.length > 0 && <p className="muted small field-note">Label at least {TEXT_MINIMUM} examples in: {short.join(", ")}.</p>}
+      {!running && few && <p className="muted small field-note">You can train now, but scores are more trustworthy with at least {TEXT_SUGGESTED} examples per category.</p>}
+    </section>
+  );
+}
+
+function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) {
+  const [text, setText] = useState("");
+  const [answers, setAnswers] = useState<PredictAnswer[] | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const ask = async (event: FormEvent) => {
+    event.preventDefault();
+    setAsking(true);
+    setProblem(null);
+    setAnswers(null);
+    try {
+      setAnswers(await api.tryTextModel(model.id, text));
+    } catch (error) {
+      setProblem(message(error, "The model couldn't answer."));
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>Try the newest model</h2>
+      <form className="dataset-about" onSubmit={(event) => void ask(event)}>
+        <label>
+          <span className="visually-hidden">Text to sort</span>
+          <textarea value={text} maxLength={5000} placeholder={beginner ? "Type something the model hasn't seen" : "Text to classify"} onChange={(event) => setText(event.target.value)} />
+        </label>
+        <div><button className="button button-small" type="submit" disabled={asking || !text.trim()}>{asking ? "Asking…" : "Ask the model"}</button></div>
+      </form>
+      {problem && <p className="small field-note" role="alert">{problem}</p>}
+      {answers && (
+        <ul className="project-list field-note" role="status">
+          {answers.slice(0, 5).map((answer) => (
+            <li key={answer.category}>
+              <span className="model-score">{Math.round(answer.chance * 100)}%</span>
+              <span className="project-text">{answer.category}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function TextMistakes({ model, dataset, beginner, onChanged }: { model: SavedModel; dataset: DatasetSummary; beginner: boolean; onChanged: () => void }) {
+  const [rows, setRows] = useState<TextMistake[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.fetchTextMistakes(model.id)
+      .then((reply) => { setRows(reply.mistakes); setTotal(reply.total); })
+      .catch((error) => setProblem(message(error, "The mistakes could not load.")));
+  }, [model.id]);
+
+  const relabel = async (row: TextMistake, category: string) => {
+    setProblem(null);
+    try {
+      await api.assignText(row.id, category, dataset.id);
+      setRows((current) => current?.map((item) => item.id === row.id ? { ...item, label: category } : item) ?? null);
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "That label couldn't be changed."));
+    }
+  };
+
+  if (!rows && !problem) return null;
+  return (
+    <section className="card">
+      <h2>Mistakes from the newest model</h2>
+      {problem && <p className="small" role="alert">{problem}</p>}
+      {rows?.length === 0 && <p className="muted small">{total ? "The texts it got wrong are no longer in this dataset." : "It got every held-back example right."}</p>}
+      {rows && rows.length > 0 && (
+        <>
+          <p className="muted small">
+            {beginner ? "Sometimes the model is right and the label is wrong. Fix any wrong labels here, then train again and see if the score improves." : "Corrections apply to the dataset and take effect from the next run."}
+            {total > rows.length ? ` Showing ${rows.length} of ${total}.` : ""}
+          </p>
+          <ul className="project-list">
+            {rows.map((row) => (
+              <li key={row.id}>
+                <div className="project-text">
+                  <span>{row.text}</span>
+                  <span className="muted small">Filed under {row.actual}, model guessed {row.guess} ({Math.round(row.chance * 100)}% sure)</span>
+                </div>
+                <label className="text-relabel">
+                  <span className="visually-hidden">Label for this text</span>
+                  <select value={row.label ?? ""} onChange={(event) => void relabel(row, event.target.value)}>
+                    {row.label !== null && !dataset.categories.includes(row.label) && <option value={row.label}>{row.label}</option>}
+                    {dataset.categories.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void }) {
   const [models, setModels] = useState<SavedModel[] | null>(null);
   const [known, setKnown] = useState<Set<number>>(new Set());
   const [problem, setProblem] = useState<string | null>(null);
+  const [busyElsewhere, setBusyElsewhere] = useState(false);
 
   const load = useCallback(async () => {
-    const [rows, versions] = await Promise.all([api.fetchDatasetModels(dataset.id), api.fetchVersions(dataset.id)]);
+    const [rows, versions, latest] = await Promise.all([api.fetchDatasetModels(dataset.id), api.fetchVersions(dataset.id), api.fetchTraining()]);
     setModels(rows);
     setKnown(new Set(versions.versions.map((version) => version.number)));
+    setBusyElsewhere(latest?.status === "running" && latest.dataset !== dataset.id);
   }, [dataset.id]);
 
   useEffect(() => { load().catch((error) => setProblem(message(error, "The models could not load."))); }, [load]);
+
+  const running = models?.find((model) => model.status === "running") ?? null;
+  const newestText = models?.find((model) => model.task === "text" && model.status !== "running" && model.hasModel) ?? null;
+
+  // Training runs on the server, so this keeps up with it, and leaving the page doesn't stop it.
+  useEffect(() => {
+    if (!running && !busyElsewhere) return;
+    const timer = window.setInterval(() => { load().catch(() => undefined); }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, busyElsewhere, load]);
+
+  const startText = async () => {
+    setProblem(null);
+    try {
+      await api.trainTextModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
+  const stop = async (id: string) => {
+    setProblem(null);
+    try {
+      await api.stopTraining(id);
+      await load();
+    } catch (error) {
+      setProblem(message(error, "Training could not be stopped."));
+    }
+  };
+  const failed = models?.[0]?.status === "failed" ? models[0] : null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -278,6 +454,10 @@ export function DatasetModels({ dataset, beginner, onBuild }: { dataset: Dataset
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
+      {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
+      {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
+      {newestText && <TryText key={newestText.id} model={newestText} beginner={beginner} />}
+      {newestText && <TextMistakes key={`m${newestText.id}`} model={newestText} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       <section className="card">
         <h2>Models trained on this data</h2>
         <p className="muted small">
@@ -285,12 +465,13 @@ export function DatasetModels({ dataset, beginner, onBuild }: { dataset: Dataset
             ? "Each model shows which version of the data trained it and how often it was right on held-back examples. Scores from small datasets are rough, and each run can hold back different examples."
             : "Score is accuracy on the held-back split of each run, so it's a rough comparison across versions. The 10 newest model files are kept."}
         </p>
-        {models?.length === 0 && (
+        {models?.length === 0 && dataset.kind === "image" && (
           <div className="notice field-note">
             <span>No models yet.</span>
             <button className="button button-small" disabled={!dataset.labelled} onClick={onBuild}>Build a model with this data</button>
           </div>
         )}
+        {models?.length === 0 && dataset.kind === "text" && <p className="muted small field-note">No models yet.</p>}
         <ul className="project-list">
           {models?.map((model) => (
             <li key={model.id}>

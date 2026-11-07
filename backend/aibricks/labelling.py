@@ -67,7 +67,7 @@ def add_image(data: bytes, dataset: str = training.DEFAULT_DATASET) -> dict:
 
 def _suggestions(dataset: str = training.DEFAULT_DATASET) -> dict:
     """The saved suggestions, if they came from the model that exists now."""
-    job = training.current()
+    job = training.latest("image")
     try:
         saved = json.loads(_suggestions_file(dataset).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -81,7 +81,7 @@ def queue(dataset: str = training.DEFAULT_DATASET) -> dict:
     folder = inbox(dataset)
     ids = [path.name for path in folder.iterdir() if _IMAGE_ID.match(path.name)] if folder.is_dir() else []
     ids.sort(key=lambda image_id: (image_id not in answers, answers.get(image_id, {}).get("chance", 0), image_id))
-    job = training.current()
+    job = training.latest("image")
     usable = job is not None and job.hasModel and job.status != "running" and job.dataset == dataset
     return {
         "items": [{"id": image_id, "suggestion": answers.get(image_id)} for image_id in ids[:MAX_QUEUE]],
@@ -173,7 +173,7 @@ def start_suggestions(dataset: str = training.DEFAULT_DATASET) -> None:
     with training._lock:
         if _suggesting:
             raise TrainingError(409, "Suggestions are already being made.")
-        job = training.current()
+        job = training.latest("image")
         if job is None or not job.hasModel or job.status == "running" or job.dataset != dataset:
             raise TrainingError(409, "Train a model on this dataset first. It makes the suggestions.")
         if not inbox(dataset).is_dir():
@@ -266,6 +266,18 @@ def text_queue(categories: list[str], dataset: str = training.DEFAULT_DATASET) -
         "counts": {name: counts.get(name, 0) for name in categories},
         "otherLabels": sum(amount for name, amount in counts.items() if name not in categories),
     }
+
+
+def texts_by_id(ids: list[str], dataset: str) -> dict[str, dict]:
+    """The texts still in a dataset, with their current labels."""
+    with closing(_database(dataset)) as database:
+        found = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            for item_id, text, label in database.execute(f"SELECT id, text, label FROM items WHERE removed = 0 AND id IN ({marks})", chunk):
+                found[item_id] = {"text": text, "label": label}
+    return found
 
 
 def text_samples(category: str, limit: int, dataset: str) -> list[dict]:

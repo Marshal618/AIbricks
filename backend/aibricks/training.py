@@ -45,6 +45,7 @@ _EPOCH_LINE = re.compile(
 
 DEFAULT_DATASET = "default"
 _DATASET_ID = re.compile(r"^[0-9a-f]{12}$")
+_STEP_LINE = re.compile(r"^Step (\d+)/(\d+)$")
 _RUN_ID = re.compile(r"^[0-9a-f]{12}$")
 _lock = threading.RLock()
 _job: "Job | None" = None
@@ -197,10 +198,24 @@ class Job:
     dataset: str = DEFAULT_DATASET
     datasetVersion: int | None = None
     modelRemoved: bool = False
+    task: str = "image"
+    stepsDone: int = 0
+    stepsTotal: int = 0
 
 
 def _folder(job: Job) -> Path:
     return workspace() / "runs" / job.id
+
+
+def _model_path(job: Job) -> Path:
+    return _folder(job) / ("model" if job.task == "text" else "model.pt")
+
+
+def _model_bytes(job: Job) -> int:
+    path = _model_path(job)
+    if path.is_dir():
+        return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+    return path.stat().st_size if path.exists() else 0
 
 
 def _number(text: str) -> float | None:
@@ -226,7 +241,7 @@ def _read_job(folder: Path) -> Job | None:
     if job.status == "running":
         job.status = "stopped"
         job.finishedAt = (folder / "job.json").stat().st_mtime
-        job.hasModel = job.best is not None and (folder / "model.pt").exists()
+        job.hasModel = job.best is not None and _model_path(job).exists()
         shutil.rmtree(folder / "data", ignore_errors=True)
     return job
 
@@ -255,6 +270,13 @@ def current() -> Job | None:
         return _job
 
 
+def latest(task: str) -> Job | None:
+    """The newest run of one kind, so a text model doesn't hide an image model, or the reverse."""
+    with _lock:
+        current()
+        return next((job for job in _saved_jobs() if job.task == task), None)
+
+
 def public(job: Job | None) -> dict | None:
     if job is None:
         return None
@@ -276,8 +298,7 @@ def saved_models(dataset: str) -> list[dict]:
             del row["epochs"]
             if row["review"]:
                 row["review"] = {key: row["review"][key] for key in ("total", "correct", "categories")}
-            model = _folder(job) / "model.pt"
-            row["modelBytes"] = model.stat().st_size if job.hasModel and model.exists() else 0
+            row["modelBytes"] = _model_bytes(job) if job.hasModel else 0
             rows.append(row)
         return rows
 
@@ -306,9 +327,15 @@ def _tidy_runs(keep: Path) -> None:
             with_model.append(job)
     with_model.sort(key=lambda job: job.startedAt, reverse=True)
     for job in with_model[MODELS_KEPT - 1:]:
-        (_folder(job) / "model.pt").unlink(missing_ok=True)
+        path = _model_path(job)
+        shutil.rmtree(path, ignore_errors=True) if path.is_dir() else path.unlink(missing_ok=True)
         job.hasModel, job.modelRemoved = False, True
         _save(job)
+
+
+def _cache() -> Path:
+    configured = os.environ.get("AI_BRICKS_CACHE")
+    return Path(configured) if configured else workspace() / "cache"
 
 
 def _environment(folder: Path) -> dict[str, str]:
@@ -317,8 +344,10 @@ def _environment(folder: Path) -> dict[str, str]:
         "HOME": str(folder),
         "OMP_NUM_THREADS": str(max((os.cpu_count() or 2) - 1, 1)),
         "PYTORCH_ENABLE_MPS_FALLBACK": "1",
-        "TORCH_HOME": str(workspace() / "cache" / "torch"),
-        "HF_HOME": str(workspace() / "cache" / "huggingface"),
+        "TORCH_HOME": str(_cache() / "torch"),
+        "HF_HOME": str(_cache() / "huggingface"),
+        "HF_HUB_DISABLE_TELEMETRY": "1",
+        "TOKENIZERS_PARALLELISM": "false",
     }
     try:
         import certifi  # Python from python.org on a Mac has no certificates of its own.
@@ -334,6 +363,10 @@ def _python_command(script: str, *arguments: str) -> list[str]:
 
 
 def _record(job: Job, line: str) -> None:
+    step = _STEP_LINE.match(line)
+    if step:
+        job.stepsDone, job.stepsTotal = int(step[1]), int(step[2])
+        return
     started = _START_LINE.match(line)
     if started:
         job.trainCount, job.checkCount, job.device = int(started[1]), int(started[2]), started[3]
@@ -377,7 +410,18 @@ def _review(job: Job) -> None:
         lines = [line for line in done.stderr.splitlines() if line.strip()]
         job.reviewError = lines[-1][:600] if lines else "The held-back images could not be checked."
         return
-    rows = json.loads(done.stdout.strip().splitlines()[-1])
+    _summarise_review(job, json.loads(done.stdout.strip().splitlines()[-1]))
+
+
+def _review_text(job: Job) -> None:
+    """Reads what train.py recorded. Only an ID for each text is kept with the run."""
+    rows = json.loads((_folder(job) / "data" / "review.json").read_text(encoding="utf-8"))
+    for row in rows:
+        row["path"] = hashlib.sha256(row.pop("text").encode()).hexdigest()[:32]
+    _summarise_review(job, rows)
+
+
+def _summarise_review(job: Job, rows: list[dict]) -> None:
     categories: dict[str, dict[str, int]] = {name: {"correct": 0, "total": 0} for name in job.categories}
     for row in rows:
         categories[row["actual"]]["total"] += 1
@@ -409,12 +453,12 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         timer.cancel()
     with _lock:
         _process = None
-        job.hasModel = job.best is not None and (_folder(job) / "model.pt").exists()
+        job.hasModel = job.best is not None and _model_path(job).exists()
         job.stage = "reviewing"
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            _review(job)
+            _review_text(job) if job.task == "text" else _review(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -439,7 +483,6 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
 
     freeze(dataset, names, folder) copies the data for this run and returns its version number.
     """
-    global _job, _process
     with _lock:
         if current() is not None and _job.status == "running":
             raise TrainingError(409, "A model is already training. Stop it first.")
@@ -463,28 +506,56 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
                 (images / name).symlink_to(_category_folder(name, dataset).resolve(), target_is_directory=True)
         else:
             try:
-                job.datasetVersion = freeze(dataset, names, images)
+                job.datasetVersion = freeze(dataset, names, folder)
             except Exception:
                 shutil.rmtree(folder, ignore_errors=True)
                 raise
-        _tidy_runs(folder)
-        log = folder / "train.log"
-        with open(log, "wb") as errors:
-            process = subprocess.Popen(
-                _python_command("train.py"), cwd=folder, env=_environment(folder),
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors, text=True, errors="replace",
-            )
-        _job, _process = job, process
-        _save(job)
-        threading.Thread(target=_watch, args=(job, process, log), daemon=True).start()
-        return job
+        return _launch(job, folder)
+
+
+def start_text(project_name: str, slug: str, build_hash: str, files: dict[str, str], amounts: dict[str, int], dataset: str, freeze) -> Job:
+    """Starts a text run on a frozen copy of a dataset's labelled text."""
+    with _lock:
+        if current() is not None and _job.status == "running":
+            raise TrainingError(409, "A model is already training. Stop it first.")
+        job = Job(
+            id=uuid.uuid4().hex[:12], projectName=project_name, slug=slug, buildHash=build_hash,
+            categories=amounts, baseline=max(amounts.values()) / sum(amounts.values()),
+            files=sorted(files), totalEpochs=1, startedAt=time.time(), dataset=dataset, task="text",
+        )
+        folder = _folder(job)
+        (folder / "data").mkdir(parents=True)
+        for name, contents in files.items():
+            (folder / name).write_text(contents, encoding="utf-8")
+        try:
+            job.datasetVersion = freeze(dataset, list(amounts), folder)
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        return _launch(job, folder)
+
+
+def _launch(job: Job, folder: Path) -> Job:
+    global _job, _process
+    _tidy_runs(folder)
+    log = folder / "train.log"
+    with open(log, "wb") as errors:
+        process = subprocess.Popen(
+            _python_command("train.py"), cwd=folder, env=_environment(folder),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errors, text=True, errors="replace",
+        )
+    _job, _process = job, process
+    _save(job)
+    threading.Thread(target=_watch, args=(job, process, log), daemon=True).start()
+    return job
 
 
 def _require(job_id: str) -> Job:
-    job = current()
-    if job is None or job.id != job_id:
-        raise TrainingError(404, "That training run no longer exists. Train the model again.")
-    return job
+    for task in ("image", "text"):
+        job = latest(task)
+        if job is not None and job.id == job_id:
+            return job
+    raise TrainingError(404, "That training run no longer exists. Train the model again.")
 
 
 def stored(job_id: str) -> Job:
@@ -593,6 +664,8 @@ def _trained(job_id: str) -> Job:
 def predict(job_id: str, data: bytes) -> list[dict]:
     extension = read_image(data)
     job = _trained(job_id)
+    if job.task != "image":
+        raise TrainingError(422, "This model sorts text, not images.")
     folder = _folder(job)
     picture = folder / f"try-{uuid.uuid4().hex}{extension}"
     picture.write_bytes(data)
@@ -625,7 +698,10 @@ def bundle(job_id: str, target: Path, credits: str | None = None) -> Job:
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in job.files:
             archive.write(folder / name, f"{job.slug}/{name}")
-        archive.write(folder / "model.pt", f"{job.slug}/model.pt")
+        model = _model_path(job)
+        for path in sorted(model.rglob("*")) if model.is_dir() else [model]:
+            if path.is_file():
+                archive.write(path, f"{job.slug}/{path.relative_to(folder)}")
         if credits:
             archive.writestr(f"{job.slug}/DATA_SOURCES.md", credits)
     return job

@@ -121,6 +121,15 @@ export interface VersionOverview {
   canSave: boolean;
 }
 
+export interface TextMistake {
+  id: string;
+  text: string;
+  label: string | null;
+  actual: string;
+  guess: string;
+  chance: number;
+}
+
 export interface DatasetPreview {
   categories: { name: string; samples: { id: string; text?: string }[] }[];
   sources: OpenDataSource[];
@@ -139,6 +148,12 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number } | null;
+  task: "image" | "text";
+  device: string;
+  stage: "training" | "reviewing";
+  stepsDone: number;
+  stepsTotal: number;
+  error: string | null;
 }
 
 export interface OpenDataResult {

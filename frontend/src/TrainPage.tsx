@@ -87,7 +87,7 @@ export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onData
     let cancelled = false;
     const poll = async () => {
       try {
-        const latest = await api.fetchTraining();
+        const latest = await api.fetchTraining("image");
         if (!cancelled) setJob(latest);
       } catch {
         // The offline banner already covers this. The next tick tries again.
@@ -189,7 +189,11 @@ export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onData
       <Shell beginner={beginner}>
         <section className="card">
           <h2>This model trains from the export</h2>
-          <p className="muted">Training inside the app covers models that sort images into categories. Other models train on your computer from the downloaded project.</p>
+          <p className="muted">
+            {analysis.labelKind === "text"
+              ? "This block design trains from the downloaded project. To train a text sorter inside the app instead, open a text dataset in the Data labeller and use its Models tab. That model is separate from this design."
+              : "Training inside the app covers models that sort images into categories. Other models train on your computer from the downloaded project."}
+          </p>
           <div className="label-buttons train-other">
             {analysis.labelKind === "text" && <button className="button" onClick={() => onOpenData(null)}>Prepare text in the Data labeller</button>}
             <button className="button" onClick={onExport}>Go to Export</button>

@@ -223,7 +223,7 @@ function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datas
 
         {tab === "overview" && <DatasetOverview dataset={dataset} beginner={beginner} onSaved={setDataset} onLabel={() => setTab("label")} />}
         {tab === "versions" && <DatasetVersions dataset={dataset} beginner={beginner} onRestored={setDataset} />}
-        {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} />}
+        {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} onChanged={() => void load()} />}
 
         {tab === "label" && <section className="card">
           <h2>Categories</h2>
