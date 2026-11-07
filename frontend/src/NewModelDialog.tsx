@@ -25,7 +25,7 @@ export function NewModelDialog({ hasModel, onKit, onBlank, onCancel }: Props) {
         <header className="dialog-head">
           <div>
             <h1 id="new-model-title">{beginner ? "What do you want to build?" : "New model"}</h1>
-            <p className="muted">{beginner ? "Pick a goal and we'll set up most of it for you." : "Start from a template or a blank canvas."}{hasModel && " This replaces the current model."}</p>
+            <p className="muted">{beginner ? "Pick a goal and we'll set up most of it for you." : "Start from a template or a blank canvas."}{hasModel && " Your current model stays in Projects."}</p>
           </div>
           {hasModel && <button className="button button-quiet" onClick={onCancel}>Cancel</button>}
         </header>

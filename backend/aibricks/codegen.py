@@ -928,12 +928,186 @@ def main():
             if next_token == EOS:
                 break
             answer.append(next_token)
-    print(target_tokenizer.decode(answer))
+    print(target_tokenizer.decode(answer) or "(The model stopped without writing anything. It may need more data or training.)")
 
 
 if __name__ == "__main__":
     main()
 '''
+
+
+_PREDICT = '''"""Asks the trained model about one image. Train first, then run: python predict.py photo.jpg"""
+import argparse
+import json
+from pathlib import Path
+
+import torch
+
+from data import EXTENSIONS, _image_transform, _load_image
+from model import CLASS_NAMES, build_model
+
+MODEL_FILE = "model.pt"
+
+
+def load_trained_model():
+    try:
+        checkpoint = torch.load(MODEL_FILE, map_location="cpu", weights_only=True)
+    except FileNotFoundError:
+        raise SystemExit(f"{MODEL_FILE} wasn't found. Train the model first with: python train.py") from None
+    model = build_model(use_pretrained_weights=False)
+    model.load_state_dict(checkpoint["model"])
+    return model.eval()
+
+
+def answer(model, image_file):
+    """Returns (category, chance) pairs, most likely first. image_file is a path or an open file."""
+    image = _load_image(image_file, _image_transform()).unsqueeze(0)
+    with torch.no_grad():
+        chances = model(image).softmax(dim=1)[0].tolist()
+    return sorted(zip(CLASS_NAMES, chances), key=lambda pair: pair[1], reverse=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("images", nargs="*")
+    parser.add_argument("--folder", help="also ask about every image in this folder")
+    parser.add_argument("--json", action="store_true", help="print the answers as JSON")
+    arguments = parser.parse_args()
+    paths = list(arguments.images)
+    if arguments.folder:
+        paths += sorted(str(path) for path in Path(arguments.folder).iterdir() if path.suffix.lower() in EXTENSIONS)
+    if not paths:
+        parser.error("name at least one image, or use --folder")
+    model = load_trained_model()
+    results = [(path, answer(model, path)) for path in paths]
+    if arguments.json:
+        print(json.dumps([
+            {"file": path, "answers": [{"category": name, "chance": chance} for name, chance in answers]}
+            for path, answers in results
+        ]))
+        return
+    for path, answers in results:
+        if len(results) > 1:
+            print(path)
+        for name, chance in answers:
+            print(f"{chance:6.1%}  {name}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+_REVIEW = '''"""Shows which held-back images the trained model got wrong. Train first, then run: python review.py"""
+import argparse
+import json
+
+from data import load_datasets
+from model import CLASS_NAMES
+from predict import answer, load_trained_model
+
+
+def review():
+    """Asks the model about every image that training held back."""
+    model = load_trained_model()
+    _, check_data = load_datasets()
+    rows = []
+    for index in check_data.indices:
+        path, label = check_data.dataset.samples[index]
+        guess, chance = answer(model, path)[0]
+        rows.append({"path": str(path), "actual": CLASS_NAMES[label], "guess": guess, "chance": chance})
+    return rows
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="print every result as JSON")
+    arguments = parser.parse_args()
+    rows = review()
+    if arguments.json:
+        print(json.dumps(rows))
+        return
+    mistakes = [row for row in rows if row["guess"] != row["actual"]]
+    print(f"{len(rows) - len(mistakes)} of {len(rows)} held-back images were correct.")
+    for row in sorted(mistakes, key=lambda row: row["chance"], reverse=True):
+        print(f"{row['path']}: guessed {row['guess']} ({row['chance']:.0%}), actually {row['actual']}")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+_SERVE = '''"""A small web API for your trained model. Train first, then run: python serve.py
+
+Then ask it about an image from another terminal:
+    curl --data-binary @photo.jpg -H "Content-Type: application/octet-stream" http://127.0.0.1:8000/predict
+"""
+import argparse
+import io
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
+
+from predict import answer, load_trained_model
+
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
+app = FastAPI(title="AI Bricks model")
+model = None
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+@app.post("/predict")
+async def predict(request: Request):
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_IMAGE_BYTES:
+            raise HTTPException(413, "The image is larger than 25 MB.")
+    try:
+        answers = await run_in_threadpool(answer, model, io.BytesIO(bytes(data)))
+    except OSError:
+        raise HTTPException(422, "The request body isn't a readable image.") from None
+    return {
+        "best": answers[0][0],
+        "answers": [{"category": name, "chance": chance} for name, chance in answers],
+    }
+
+
+def main():
+    global model
+    parser = argparse.ArgumentParser(description="Serves the trained model over HTTP.")
+    parser.add_argument("--port", type=int, default=8000)
+    # This only accepts requests from this computer. Before opening it to a network,
+    # change the host to "0.0.0.0" and put a login and rate limit in front of it.
+    parser.add_argument("--host", default="127.0.0.1")
+    arguments = parser.parse_args()
+    model = load_trained_model()
+    uvicorn.run(app, host=arguments.host, port=arguments.port)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def trainable_categories(analysis: Analysis) -> list[str] | None:
+    """The category names if this build can train inside the app, otherwise None."""
+    if analysis.socket.output.kind == IMAGE and analysis.head.brick.id == "classify":
+        return parse_names(analysis.head.params["classes"])
+    return None
+
+
+def labelling_info(analysis: Analysis) -> tuple[str | None, list[str] | None]:
+    """What the labelling tool can sort for this build: its kind of data and its categories."""
+    kind = analysis.socket.output.kind
+    if analysis.head.brick.id == "classify" and kind in (IMAGE, TEXT) and not analysis.target:
+        return ("image" if kind == IMAGE else "text"), parse_names(analysis.head.params["classes"])
+    return None, None
 
 
 def _generate_py(analysis: Analysis) -> str:
@@ -1103,6 +1277,8 @@ if __name__ == "__main__":
 '''
 
 _TRAIN = '''"""Trains the model on your data. Fill in data.py first, then run: python train.py"""
+import os
+
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -1124,6 +1300,12 @@ def pick_device():
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def save(checkpoint):
+    """Writes the file in one step, so stopping early can't leave a broken model."""
+    torch.save(checkpoint, SAVE_TO + ".partial")
+    os.replace(SAVE_TO + ".partial", SAVE_TO)
 
 
 def evaluate(model, loader, device):
@@ -1173,8 +1355,9 @@ def main():
         if val_loss < best_loss:
             best_loss = val_loss
             checkpoint["model"] = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            save(checkpoint)
 @@AFTER@@
-    torch.save(checkpoint, SAVE_TO)
+    save(checkpoint)
     print(f"Saved the best model to {SAVE_TO}.")
 
 
@@ -1233,11 +1416,16 @@ def _smoke_py(analysis: Analysis) -> str:
     return text.replace("from sample_data import make_sample_batch", "from sample_data import BATCH_SIZE, make_sample_batch")
 
 
-def _train_py(graph: GraphIn, analysis: Analysis) -> str:
+def training_settings(graph: GraphIn) -> dict:
     dial = TRAINING_DIAL[graph.training] | (graph.trainingOverride or {})
     if graph.trainingOverride:
         dial["name"] = "Custom"
     dial["epochs"], dial["batch_size"] = int(dial["epochs"]), int(dial["batch_size"])
+    return dial
+
+
+def _train_py(graph: GraphIn, analysis: Analysis) -> str:
+    dial = training_settings(graph)
     task = analysis.head.brick.id
     is_classify = task == "classify"
     return _fill(
@@ -1315,6 +1503,23 @@ def _readme(graph: GraphIn, analysis: Analysis) -> str:
     pretrained = any(s.brick.id in PRETRAINED for s in analysis.steps)
     note = "\nThe first training run downloads the pretrained weights.\n" if pretrained else ""
     generate_row = "| `generate.py` | Produces text from the trained model |\n" if analysis.head.brick.id == "generate" else ""
+    predict_row = ""
+    predict_note = ""
+    if trainable_categories(analysis):
+        predict_row = (
+            "| `predict.py` | Asks the trained model about one image |\n"
+            "| `review.py` | Lists the held-back images the model got wrong |\n"
+            "| `serve.py` | Runs a small web API for the trained model |\n"
+        )
+        predict_note = (
+            "\n## How to use it\n\n"
+            "- `python predict.py photo.jpg` asks the trained model about one image.\n"
+            "- `python review.py` lists the held-back images it got wrong. It needs your data folder in place.\n"
+            "- `python serve.py` starts a web API on this computer. Send it an image with:\n\n"
+            "  ```\n"
+            '  curl --data-binary @photo.jpg -H "Content-Type: application/octet-stream" http://127.0.0.1:8000/predict\n'
+            "  ```\n"
+        )
     title = " ".join(graph.projectName.split()) or "My model"
     return f"""# {title}
 
@@ -1340,7 +1545,7 @@ Designed in AI Bricks. This is plain PyTorch, so you can read and change all of 
    ```
 {note}
 The best version is saved to `model.pt`, along with any scaling values you need to prepare new data.
-
+{predict_note}
 ## Files
 
 | File | What it does |
@@ -1349,7 +1554,7 @@ The best version is saved to `model.pt`, along with any scaling values you need 
 | `bricks.py` | Holds one small module for each kind of brick |
 | `data.py` | Loads your data |
 | `train.py` | Trains the model |
-{generate_row}| `smoke_test.py` | Repeats the test run |
+{generate_row}{predict_row}| `smoke_test.py` | Repeats the test run |
 | `sample_data.py` | Generates the test run's sample data |
 
 ## What the test run proved
@@ -1371,6 +1576,8 @@ def _requirements(analysis: Analysis) -> str:
         lines += ["torchvision>=0.17", "pillow>=10"]
     if any(s.brick.id == "pretrained_language" for s in analysis.steps):
         lines.append("transformers>=4.40")
+    if trainable_categories(analysis):
+        lines += ["fastapi>=0.115", "uvicorn>=0.30"]
     return "\n".join(lines) + "\n"
 
 
@@ -1379,6 +1586,8 @@ def generate(graph: GraphIn, analysis: Analysis) -> dict[str, str]:
     if not analysis.ok:
         raise ValueError("Cannot generate code for a build with issues.")
     extra = {"generate.py": _generate_py(analysis)} if analysis.head.brick.id == "generate" else {}
+    if trainable_categories(analysis):
+        extra |= {"predict.py": _PREDICT, "review.py": _REVIEW, "serve.py": _SERVE}
     return {
         **extra,
         "README.md": _readme(graph, analysis),

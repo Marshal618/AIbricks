@@ -13,6 +13,8 @@ export function ExportPage({ projectFolder, onDownload, onTest, onCode }: Props)
   const tested = analysis?.tested ?? false;
   const files = Object.keys(analysis?.files ?? {});
   const hasGenerate = files.includes("generate.py");
+  const hasPredict = files.includes("predict.py");
+  const hasServe = files.includes("serve.py");
   return (
     <div className="page-scroll">
       <div className="page-inner page-narrow">
@@ -43,8 +45,24 @@ export function ExportPage({ projectFolder, onDownload, onTest, onCode }: Props)
               {beginner && <p className="muted small field-note-top">Unzip the download, open a terminal in that folder's parent, and run these lines. You need Python installed.</p>}
               <pre className="command">{`cd ${projectFolder}
 pip install -r requirements.txt
-python train.py${hasGenerate ? '\npython generate.py "your text"' : ""}`}</pre>
+python train.py${hasGenerate ? '\npython generate.py "your text"' : ""}${hasPredict ? "\npython predict.py photo.jpg\npython review.py" : ""}`}</pre>
             </section>
+            {hasServe && (
+              <section className="card">
+                <h2>{beginner ? "Step 3: Use it in your own app" : "Serve the model"}</h2>
+                <p className="muted small field-note-top">
+                  {beginner
+                    ? "After training, this starts a small web service on your computer. Other programs can send it an image and get the answer back."
+                    : "Starts a FastAPI server on 127.0.0.1:8000 after training. Add a login and rate limit before exposing it to a network."}
+                </p>
+                <pre className="command">{`python serve.py
+
+# In another terminal:
+curl --data-binary @photo.jpg \\
+  -H "Content-Type: application/octet-stream" \\
+  http://127.0.0.1:8000/predict`}</pre>
+              </section>
+            )}
             <section className="card">
               <div className="card-head">
                 <h2>Included files</h2>

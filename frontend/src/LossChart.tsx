@@ -17,7 +17,7 @@ function niceNumber(value: number) {
 }
 
 /** Loss over training steps. Hover or tap for exact values. */
-export function LossChart({ points, totalSteps }: { points: LossPoint[]; totalSteps: number }) {
+export function LossChart({ points, totalSteps, caption = "Training loss by step", unit = "Step" }: { points: LossPoint[]; totalSteps: number; caption?: string; unit?: string }) {
   const svg = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<LossPoint | null>(null);
   const innerWidth = WIDTH - MARGIN.left - MARGIN.right;
@@ -38,13 +38,13 @@ export function LossChart({ points, totalSteps }: { points: LossPoint[]; totalSt
 
   return (
     <figure className="loss-chart">
-      <figcaption>Training loss by step</figcaption>
+      <figcaption>{caption}</figcaption>
       <div className="chart-wrap">
         <svg
           ref={svg}
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           role="img"
-          aria-label={finite.length ? `Loss fell from ${niceNumber(finite[0].loss)} to ${niceNumber(finite[finite.length - 1].loss)} over ${finite.length} steps.` : "Waiting for the first step."}
+          aria-label={finite.length ? `Loss fell from ${niceNumber(finite[0].loss)} to ${niceNumber(finite[finite.length - 1].loss)} over ${finite.length} ${unit.toLowerCase()}s.` : "Waiting for the first result."}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
         >
@@ -57,8 +57,8 @@ export function LossChart({ points, totalSteps }: { points: LossPoint[]; totalSt
               </g>
             );
           })}
-          <text className="tick" x={MARGIN.left} y={HEIGHT - 8}>Step 1</text>
-          <text className="tick" x={WIDTH - MARGIN.right} y={HEIGHT - 8} textAnchor="end">Step {totalSteps}</text>
+          <text className="tick" x={MARGIN.left} y={HEIGHT - 8}>{unit} 1</text>
+          <text className="tick" x={WIDTH - MARGIN.right} y={HEIGHT - 8} textAnchor="end">{unit} {totalSteps}</text>
           <path className="loss-line" d={path} />
           {hover && (
             <>
@@ -69,7 +69,7 @@ export function LossChart({ points, totalSteps }: { points: LossPoint[]; totalSt
         </svg>
         {hover && (
           <div className="chart-tip" style={{ left: `${Math.min((x(hover.step) / WIDTH) * 100, 80)}%` }}>
-            Step {hover.step}: <strong>{niceNumber(hover.loss)}</strong>
+            {unit} {hover.step}: <strong>{niceNumber(hover.loss)}</strong>
           </div>
         )}
       </div>
@@ -77,7 +77,7 @@ export function LossChart({ points, totalSteps }: { points: LossPoint[]; totalSt
         <details className="chart-table">
           <summary>Show values as a table</summary>
           <table>
-            <thead><tr><th scope="col">Step</th><th scope="col">Loss</th></tr></thead>
+            <thead><tr><th scope="col">{unit}</th><th scope="col">Loss</th></tr></thead>
             <tbody>
               {finite.map((point) => <tr key={point.step}><td>{point.step}</td><td>{point.loss.toFixed(4)}</td></tr>)}
             </tbody>

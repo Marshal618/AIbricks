@@ -11,12 +11,15 @@ import { Dock } from "./Dock";
 import { ExportPage } from "./ExportPage";
 import { depths } from "./graphOrder";
 import { Inspector } from "./Inspector";
+import { LabelPage } from "./LabelPage";
 import { Library, type LibraryFocus } from "./Library";
 import { NewModelDialog } from "./NewModelDialog";
 import { Outline } from "./Outline";
+import { ProjectsDialog } from "./ProjectsDialog";
 import { PortShape } from "./PortGlyph";
 import { EMPTY_TEST, TestPage, type TestState } from "./TestPage";
-import type { Analysis, Brick, BrickNodeType, Catalogue, GraphPayload, Kit, Mode, ParamValue, ParseReply, TrainingOverride } from "./types";
+import { TrainPage } from "./TrainPage";
+import type { Analysis, Brick, BrickNodeType, Catalogue, GraphPayload, Kit, Mode, ParamValue, ParseReply, ProjectData, TrainingOverride } from "./types";
 
 const nodeTypes = { brick: BrickNode };
 const STORAGE_KEY = "ai-bricks-build-v1";
@@ -33,7 +36,11 @@ interface Saved {
   nodes: BrickNodeType[];
   edges: Edge[];
   kitId: string | null;
+  projectId?: string;
 }
+
+const AUTOSAVE_DELAY = 800;
+const PROJECT_FILE_FORMAT = "ai-bricks-project";
 
 function loadSaved(): Saved | null {
   try {
@@ -79,10 +86,13 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   const [codeDraft, setCodeDraft] = useState<{ text: string; base: string } | null>(null);
   const [tidyTick, setTidyTick] = useState(0);
   const [kitId, setKitId] = useState<string | null>(saved?.kitId ?? null);
+  const [projectId, setProjectId] = useState(() => saved?.projectId ?? makeId());
+  const [showProjects, setShowProjects] = useState(false);
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "failed" | "idle">("idle");
   const [showWelcome, setShowWelcome] = useState(!saved || saved.nodes.length === 0);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [offline, setOffline] = useState(false);
-  const [page, setPage] = useState<"design" | "code" | "test" | "export">("design");
+  const [page, setPage] = useState<"design" | "code" | "test" | "label" | "train" | "export">("design");
   const [leftTab, setLeftTab] = useState<"library" | "outline">("library");
   const [toast, setToast] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<EditorContextValue["connecting"]>(null);
@@ -136,9 +146,36 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   }, [graphKey, refresh]);
 
   useEffect(() => {
-    const data: Saved = { projectName, training, trainingOverride, nodes, edges, kitId };
+    const data: Saved = { projectName, training, trainingOverride, nodes, edges, kitId, projectId };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* the build still works without saving */ }
-  }, [projectName, training, trainingOverride, nodes, edges, kitId]);
+  }, [projectName, training, trainingOverride, nodes, edges, kitId, projectId]);
+
+  // Keeps the open project on disk. A blank canvas isn't worth a place in the list.
+  const projectData: ProjectData = useMemo(
+    () => ({ projectName, training, trainingOverride, nodes, edges, kitId }),
+    [projectName, training, trainingOverride, nodes, edges, kitId],
+  );
+  const unsaved = useRef<{ id: string; data: ProjectData } | null>(null);
+  const writeProject = useCallback(async (id: string, data: ProjectData) => {
+    setSaveState("saving");
+    try {
+      await api.saveProject(id, data);
+      setSaveState("saved");
+    } catch {
+      setSaveState("failed");
+    }
+  }, []);
+  const flushProject = useCallback(() => {
+    const pending = unsaved.current;
+    unsaved.current = null;
+    if (pending) void writeProject(pending.id, pending.data);
+  }, [writeProject]);
+  useEffect(() => {
+    if (!projectData.nodes.length) return;
+    unsaved.current = { id: projectId, data: projectData };
+    const timer = window.setTimeout(flushProject, AUTOSAVE_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [projectData, projectId, flushProject]);
 
   const portName = useCallback((type: string) => catalogue.portTypes[type]?.name ?? type, [catalogue]);
 
@@ -352,6 +389,8 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   }, [bricks, flow, setEdges, setNodes]);
 
   const loadKit = useCallback((kit: Kit) => {
+    flushProject();
+    setProjectId(makeId());
     setNodes(kit.nodes.map((node) => ({
       id: node.id,
       type: "brick",
@@ -369,9 +408,11 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setTest(EMPTY_TEST);
     setShowWelcome(false);
     setPage("design");
-  }, [bricks, setEdges, setNodes]);
+  }, [bricks, flushProject, setEdges, setNodes]);
 
   const startBlank = useCallback(() => {
+    flushProject();
+    setProjectId(makeId());
     testAbort.current?.abort();
     setNodes([]);
     setEdges([]);
@@ -383,7 +424,62 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setTest(EMPTY_TEST);
     setShowWelcome(false);
     setPage("design");
-  }, [setEdges, setNodes]);
+  }, [flushProject, setEdges, setNodes]);
+
+  const openProject = useCallback((id: string, data: ProjectData) => {
+    flushProject();
+    testAbort.current?.abort();
+    setProjectId(id);
+    setNodes(data.nodes.filter((node) => bricks[node.data?.brickId]).map((node) => ({ ...node, selected: false })));
+    setEdges(data.edges);
+    setProjectName(data.projectName);
+    setTraining(catalogue.training[data.training] ? data.training : "balanced");
+    setTrainingOverride(data.trainingOverride ?? null);
+    setKitId(data.kitId ?? null);
+    setCodeDraft(null);
+    setTest(EMPTY_TEST);
+    setShowProjects(false);
+    setShowWelcome(false);
+    setPage("design");
+  }, [bricks, catalogue, flushProject, setEdges, setNodes]);
+
+  const saveProjectFile = useCallback(() => {
+    const body = JSON.stringify({ format: PROJECT_FILE_FORMAT, version: 1, ...projectData }, null, 2);
+    const url = URL.createObjectURL(new Blob([body], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${projectName.toLowerCase().match(/[a-z0-9]+/g)?.join("_") ?? "my_model"}.aibricks.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [projectData, projectName]);
+
+  /** Opens a saved file as a new project. Returns why it couldn't, if it couldn't. */
+  const openProjectFile = useCallback((file: unknown): string | null => {
+    const data = file as Partial<ProjectData> & { format?: string };
+    if (data?.format !== PROJECT_FILE_FORMAT || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+      return "This file isn't an AI Bricks project.";
+    }
+    const nodes = data.nodes.filter((node) => (
+      typeof node?.id === "string" && bricks[node.data?.brickId] && Number.isFinite(node.position?.x) && Number.isFinite(node.position?.y)
+    )).map((node) => ({
+      id: node.id,
+      type: "brick" as const,
+      position: node.position,
+      data: { brickId: node.data.brickId, params: { ...defaultParams(bricks[node.data.brickId]), ...node.data.params } },
+    }));
+    if (!nodes.length) return "This project file has no components this version of AI Bricks can read.";
+    const ids = new Set(nodes.map((node) => node.id));
+    const edges = data.edges.filter((edge) => ids.has(edge?.source) && ids.has(edge?.target));
+    openProject(makeId(), {
+      projectName: typeof data.projectName === "string" ? data.projectName.slice(0, 60) : "Untitled model",
+      training: typeof data.training === "string" ? data.training : "balanced",
+      trainingOverride: data.trainingOverride ?? null,
+      nodes,
+      edges,
+      kitId: typeof data.kitId === "string" ? data.kitId : null,
+    });
+    return null;
+  }, [bricks, openProject]);
 
   const selectNode = useCallback((id: string) => {
     setPage("design");
@@ -526,6 +622,8 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     { id: "design", label: "Design", status: issueCount ? `${issueCount} ${issueCount === 1 ? "problem" : "problems"}` : nodes.length ? "Valid" : "Empty", tone: issueCount ? "bad" : nodes.length ? "good" : "" },
     { id: "code", label: "Code", status: codeDraft && codeDraft.text !== codeDraft.base ? "Unconverted edits" : analysis?.ok ? "Generated" : "Waiting", tone: codeDraft && codeDraft.text !== codeDraft.base ? "bad" : analysis?.ok ? "good" : "" },
     { id: "test", label: "Test", status: testStatus, tone: tested ? "good" : testStatus === "Failed" ? "bad" : "" },
+    { id: "label", label: "Label", status: !analysis?.ok ? "Waiting" : analysis.labelKind ? "Optional" : "Not needed", tone: "" },
+    { id: "train", label: "Train", status: !analysis?.ok ? "Waiting" : !analysis.categories ? "Use export" : tested ? "Ready" : "Locked", tone: tested && analysis?.categories ? "good" : "" },
     { id: "export", label: "Export", status: tested ? "Ready" : "Locked", tone: tested ? "good" : "" },
   ] as const;
 
@@ -542,6 +640,7 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
             <input value={projectName} maxLength={60} onChange={(event) => setProjectName(event.target.value)} />
           </label>
           <button className="button button-small" onClick={() => setShowWelcome(true)}>New model</button>
+          <button className="button button-small" onClick={() => setShowProjects(true)}>Projects</button>
           <nav className="workflow" aria-label="Workflow">
             {pages.map((item, index) => (
               <button key={item.id} className={page === item.id ? "active" : ""} aria-current={page === item.id ? "page" : undefined} onClick={() => setPage(item.id)}>
@@ -562,7 +661,9 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
             ))}
           </div>
           {tested
-            ? page !== "export" && <button className="button button-primary" onClick={() => setPage("export")}>Continue to export</button>
+            ? analysis?.categories && page !== "train" && page !== "export"
+              ? <button className="button button-primary" onClick={() => setPage("train")}>Continue to training</button>
+              : page !== "export" && <button className="button button-primary" onClick={() => setPage("export")}>Continue to export</button>
             : <button className="button button-primary" disabled={!analysis?.ok || test.running} onClick={runTest}>{test.running ? "Testing…" : "Run test"}</button>}
         </header>
         {offline && <div className="offline" role="alert">The AI Bricks server isn't responding. Your work is saved in this browser and will be checked again when it returns.</div>}
@@ -645,6 +746,16 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
             <TestPage test={test} nodes={nodes} edges={edges} onRun={runTest} onDesign={() => setPage("design")} />
           </div>
         )}
+        {page === "label" && (
+          <div className="page">
+            <LabelPage onDesign={() => setPage("design")} onTrain={() => setPage("train")} onExport={() => setPage("export")} />
+          </div>
+        )}
+        {page === "train" && (
+          <div className="page">
+            <TrainPage graph={graph} onDesign={() => setPage("design")} onTest={() => setPage("test")} onExport={() => setPage("export")} onLabel={() => setPage("label")} />
+          </div>
+        )}
         {page === "export" && (
           <div className="page">
             <ExportPage
@@ -662,8 +773,12 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
           {inputShape && <span>Input: {inputShape}</span>}
           <span>Training: {trainingOverride && Object.keys(trainingOverride).length ? "Custom" : catalogue.training[training]?.name}</span>
           <span className="spacer" />
+          {saveState !== "idle" && <span className={saveState === "failed" ? "tone-bad" : ""}>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Couldn't save to disk"}</span>}
           <span className={offline ? "tone-bad" : ""}>{offline ? "Server offline" : "Server connected"}</span>
         </footer>
+        {showProjects && (
+          <ProjectsDialog currentId={projectId} onOpen={openProject} onOpenFile={openProjectFile} onSaveFile={saveProjectFile} onClose={() => setShowProjects(false)} />
+        )}
         {showWelcome && (
           <NewModelDialog hasModel={nodes.length > 0} onKit={loadKit} onBlank={startBlank} onCancel={() => setShowWelcome(false)} />
         )}

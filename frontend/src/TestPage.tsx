@@ -46,8 +46,8 @@ export function TestPage({ test, nodes, edges, onRun, onDesign }: Props) {
             <h1>Test run</h1>
             <p className="muted">
               {beginner
-                ? "A quick practice run on made-up data, to prove your model works before you use real data. Your own data is never uploaded."
-                : `Trains for ${TOTAL_STEPS} steps on generated sample data. Your own data is not required or uploaded.`}
+                ? "A quick practice run on made-up data, to prove your model works before you use real data. It doesn't use your own data."
+                : `Trains for ${TOTAL_STEPS} steps on generated sample data. Your own data is not used.`}
             </p>
           </div>
           <button className={`button${tested ? "" : " button-primary"}`} disabled={!ready || test.running} onClick={onRun}>
@@ -71,7 +71,7 @@ export function TestPage({ test, nodes, edges, onRun, onDesign }: Props) {
               <p>
                 {test.result.passed
                   ? beginner
-                    ? "Your model works and can learn. It hasn't seen your real data yet, so this doesn't tell you how accurate it will be. Export it and train it on your data to find out."
+                    ? `Your model works and can learn. It hasn't seen your real data yet, so this doesn't tell you how accurate it will be. ${analysis?.categories ? "Go to Train to teach it with your own images." : "Export it and train it on your data to find out."}`
                     : "The model runs and its loss decreases on sample data. This does not indicate accuracy on your data, which only training and evaluation on that data can show."
                   : test.result.detail}
               </p>

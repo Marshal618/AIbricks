@@ -1,4 +1,4 @@
-import type { Node } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
 
 export type ParamValue = string | number | boolean;
 
@@ -73,6 +73,106 @@ export interface Analysis {
   files: Record<string, string>;
   dataNeeds: string[];
   tested: boolean;
+  buildHash: string | null;
+  categories: string[] | null;
+  labelKind: "image" | "text" | null;
+  labelCategories: string[] | null;
+}
+
+export interface LabelItem {
+  id: string;
+  text?: string;
+  suggestion?: { category: string; chance: number } | null;
+}
+
+export interface ImageQueue {
+  items: LabelItem[];
+  total: number;
+  unsuggested: number;
+  suggesting: boolean;
+  suggestError: string | null;
+  modelCategories: string[] | null;
+}
+
+export interface TextQueue {
+  items: LabelItem[];
+  total: number;
+  counts: Record<string, number>;
+  otherLabels: number;
+}
+
+export interface DatasetInfo {
+  counts: Record<string, number>;
+  minPerCategory: number;
+  minTotal: number;
+  suggestedPerCategory: number;
+  problems: string[];
+}
+
+export interface TrainingEpoch {
+  epoch: number;
+  trainLoss: number | null;
+  checkLoss: number | null;
+  accuracy: number | null;
+}
+
+export interface TrainingJob {
+  id: string;
+  projectName: string;
+  buildHash: string;
+  categories: Record<string, number>;
+  baseline: number;
+  status: "running" | "finished" | "stopped" | "failed";
+  totalEpochs: number;
+  trainCount: number;
+  checkCount: number;
+  device: string;
+  epochs: TrainingEpoch[];
+  best: TrainingEpoch | null;
+  hasModel: boolean;
+  error: string | null;
+  elapsedSeconds: number;
+  stage: "training" | "reviewing";
+  review: TrainingReview | null;
+  reviewError: string | null;
+}
+
+export interface TrainingMistake {
+  actual: string;
+  guess: string;
+  chance: number;
+  file: string;
+  movedTo?: string | null;
+  removed?: boolean;
+}
+
+export interface TrainingReview {
+  total: number;
+  correct: number;
+  categories: Record<string, { correct: number; total: number }>;
+  mistakeCount: number;
+  mistakes: TrainingMistake[];
+}
+
+export interface ProjectRow {
+  id: string;
+  projectName: string;
+  components: number;
+  updatedAt: number;
+}
+
+export interface ProjectData {
+  projectName: string;
+  training: string;
+  trainingOverride: TrainingOverride | null;
+  nodes: BrickNodeType[];
+  edges: Edge[];
+  kitId: string | null;
+}
+
+export interface PredictAnswer {
+  category: string;
+  chance: number;
 }
 
 export type BrickData = { brickId: string; params: Record<string, ParamValue> };

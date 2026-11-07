@@ -1,0 +1,283 @@
+"""Sorts unlabelled images and text by hand, with optional suggestions from a trained model.
+
+Unsorted images wait in an inbox. Labelling one moves it into the same category folders
+that training reads, so nothing needs converting afterwards. Everything stays on this computer.
+"""
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import threading
+import uuid
+from contextlib import closing
+from pathlib import Path
+
+from . import training
+from .training import TrainingError
+
+MAX_QUEUE = 5000
+MAX_TEXT_ITEMS = 100_000
+MAX_TEXT_LENGTH = 5000
+MAX_TEXT_FILE_BYTES = 50 * 1024 * 1024
+SUGGEST_LIMIT_SECONDS = 60 * 60
+REMOVED_KEPT = 100
+
+_IMAGE_ID = re.compile(r"^[0-9a-f]{32}\.(jpg|png|bmp|webp)$")
+_suggesting = False
+_suggest_error: str | None = None
+
+
+def inbox() -> Path:
+    return training.workspace() / "inbox" / "images"
+
+
+def _suggestions_file() -> Path:
+    return training.workspace() / "inbox" / "suggestions.json"
+
+
+def _inbox_path(image_id: str) -> Path:
+    if not _IMAGE_ID.match(image_id):
+        raise TrainingError(404, "That image doesn't exist.")
+    return inbox() / image_id
+
+
+# ---------------------------------------------------------------------- images
+
+def add_image(data: bytes) -> dict:
+    extension = training.read_image(data)
+    image_id = hashlib.sha256(data).hexdigest()[:32] + extension
+    with training._lock:
+        known = [inbox()] + list((training.workspace() / "datasets").glob("*"))
+        if any((folder / image_id).exists() for folder in known):
+            return {"duplicate": True}
+        if training.image_total() >= training.MAX_IMAGES:
+            raise TrainingError(413, f"The image store is full at {training.MAX_IMAGES:,} images. Remove some first.")
+        inbox().mkdir(parents=True, exist_ok=True)
+        temporary = inbox() / f"{uuid.uuid4().hex}.partial"
+        temporary.write_bytes(data)
+        os.replace(temporary, inbox() / image_id)
+    return {"duplicate": False}
+
+
+def _suggestions() -> dict:
+    """The saved suggestions, if they came from the model that exists now."""
+    job = training.current()
+    try:
+        saved = json.loads(_suggestions_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return saved["answers"] if job is not None and saved.get("jobId") == job.id else {}
+
+
+def queue() -> dict:
+    """Lists what's left. Suggested images come first, starting with the model's least sure."""
+    answers = _suggestions()
+    ids = [path.name for path in inbox().iterdir() if _IMAGE_ID.match(path.name)] if inbox().is_dir() else []
+    ids.sort(key=lambda image_id: (image_id not in answers, answers.get(image_id, {}).get("chance", 0), image_id))
+    job = training.current()
+    usable = job is not None and job.hasModel and job.status != "running"
+    return {
+        "items": [{"id": image_id, "suggestion": answers.get(image_id)} for image_id in ids[:MAX_QUEUE]],
+        "total": len(ids),
+        "unsuggested": sum(image_id not in answers for image_id in ids),
+        "suggesting": _suggesting,
+        "suggestError": _suggest_error,
+        "modelCategories": sorted(job.categories) if usable else None,
+    }
+
+
+def image_file(image_id: str) -> Path:
+    path = _inbox_path(image_id)
+    if not path.is_file():
+        raise TrainingError(404, "That image doesn't exist.")
+    return path
+
+
+def assign_image(image_id: str, category: str) -> None:
+    with training._lock:
+        source = image_file(image_id)
+        target = training._category_folder(category)
+        target.mkdir(parents=True, exist_ok=True)
+        os.replace(source, target / image_id)
+
+
+def unassign_image(image_id: str, category: str | None) -> None:
+    """Puts an image back in the inbox. A category of None restores a removed image."""
+    with training._lock:
+        _inbox_path(image_id)
+        if category is not None and training.is_running():
+            raise TrainingError(409, "Wait for training to finish before undoing this label.")
+        source = (training._category_folder(category) if category is not None else training.removed_folder()) / image_id
+        if not source.is_file():
+            raise TrainingError(404, "That image can't be restored any more.")
+        inbox().mkdir(parents=True, exist_ok=True)
+        os.replace(source, inbox() / image_id)
+
+
+def remove_image(image_id: str) -> None:
+    with training._lock:
+        source = image_file(image_id)
+        folder = training.removed_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        os.replace(source, folder / image_id)
+        # Undo only reaches back so far, so older removals are deleted for good.
+        for old in sorted(folder.iterdir(), key=lambda path: path.stat().st_mtime)[:-REMOVED_KEPT]:
+            old.unlink(missing_ok=True)
+
+
+def clear_images() -> None:
+    with training._lock:
+        for path in (inbox().iterdir() if inbox().is_dir() else []):
+            path.unlink(missing_ok=True)
+        _suggestions_file().unlink(missing_ok=True)
+
+
+def is_suggesting() -> bool:
+    return _suggesting
+
+
+def _run_suggestions(job: training.Job, folder: Path, images: Path) -> None:
+    global _suggesting, _suggest_error
+    try:
+        done = subprocess.run(
+            training._python_command("predict.py", "--folder", str(images.resolve()), "--json"),
+            cwd=folder, env=training._environment(folder), stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, errors="replace", timeout=SUGGEST_LIMIT_SECONDS,
+        )
+        if done.returncode != 0:
+            lines = [line for line in done.stderr.splitlines() if line.strip()]
+            raise ValueError(lines[-1][:600] if lines else "The model could not read the images.")
+        answers = {}
+        for row in json.loads(done.stdout.strip().splitlines()[-1]):
+            best = row["answers"][0]
+            answers[Path(row["file"]).name] = {"category": best["category"], "chance": best["chance"]}
+        temporary = _suggestions_file().with_suffix(".partial")
+        temporary.write_text(json.dumps({"jobId": job.id, "answers": answers}), encoding="utf-8")
+        os.replace(temporary, _suggestions_file())
+    except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, IndexError) as problem:
+        _suggest_error = f"The model couldn't make suggestions: {problem}"
+    finally:
+        _suggesting = False
+
+
+def start_suggestions() -> None:
+    global _suggesting, _suggest_error
+    with training._lock:
+        if _suggesting:
+            raise TrainingError(409, "Suggestions are already being made.")
+        job = training.current()
+        if job is None or not job.hasModel or job.status == "running":
+            raise TrainingError(409, "Train a model first. It makes the suggestions.")
+        if not inbox().is_dir():
+            raise TrainingError(409, "There are no unsorted images to suggest labels for.")
+        _suggesting, _suggest_error = True, None
+        folder = training._folder(job)
+    threading.Thread(target=_run_suggestions, args=(job, folder, inbox()), daemon=True).start()
+
+
+# ------------------------------------------------------------------------ text
+
+def _database() -> sqlite3.Connection:
+    folder = training.workspace() / "text"
+    folder.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(folder / "labels.sqlite")
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS items (seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, text TEXT NOT NULL, "
+        "label TEXT, removed INTEGER NOT NULL DEFAULT 0)"
+    )
+    return connection
+
+
+def _read_texts(data: bytes, kind: str) -> tuple[list[str], str | None]:
+    try:
+        content = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise TrainingError(422, "This file isn't UTF-8 text. Save it as UTF-8 and try again.") from None
+    if kind != "csv":
+        return [line.strip() for line in content.splitlines()], None
+    try:
+        csv.field_size_limit(MAX_TEXT_FILE_BYTES)
+        rows = csv.reader(io.StringIO(content, newline=""))
+        header = next(rows, None)
+        if not header:
+            raise TrainingError(422, "This CSV file is empty.")
+        lowered = [name.strip().lower() for name in header]
+        column = lowered.index("text") if "text" in lowered else 0
+        return [row[column].strip() for row in rows if len(row) > column], header[column].strip()
+    except csv.Error:
+        raise TrainingError(422, "This CSV file couldn't be read.") from None
+
+
+def add_text(data: bytes, kind: str) -> dict:
+    texts, column = _read_texts(data, kind)
+    added = duplicates = too_long = 0
+    with closing(_database()) as database, database:
+        total = database.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        for text in texts:
+            if not text:
+                continue
+            if len(text) > MAX_TEXT_LENGTH:
+                too_long += 1
+                continue
+            if total + added >= MAX_TEXT_ITEMS:
+                raise TrainingError(413, f"The text store is full at {MAX_TEXT_ITEMS:,} items. Remove some first.")
+            item_id = hashlib.sha256(text.encode()).hexdigest()[:32]
+            inserted = database.execute("INSERT OR IGNORE INTO items (id, text) VALUES (?, ?)", (item_id, text)).rowcount
+            added += inserted
+            duplicates += 1 - inserted
+    return {"added": added, "duplicates": duplicates, "tooLong": too_long, "column": column}
+
+
+def text_queue(categories: list[str]) -> dict:
+    with closing(_database()) as database:
+        rows = database.execute(
+            "SELECT id, text FROM items WHERE label IS NULL AND removed = 0 ORDER BY seq LIMIT ?", (MAX_QUEUE,)
+        ).fetchall()
+        total = database.execute("SELECT COUNT(*) FROM items WHERE label IS NULL AND removed = 0").fetchone()[0]
+        counts = dict(database.execute("SELECT label, COUNT(*) FROM items WHERE label IS NOT NULL AND removed = 0 GROUP BY label").fetchall())
+    return {
+        "items": [{"id": item_id, "text": text} for item_id, text in rows],
+        "total": total,
+        "counts": {name: counts.get(name, 0) for name in categories},
+        "otherLabels": sum(amount for name, amount in counts.items() if name not in categories),
+    }
+
+
+def _update_text(item_id: str, statement: str, *values: object) -> None:
+    with closing(_database()) as database, database:
+        if database.execute(f"UPDATE items SET {statement} WHERE id = ?", (*values, item_id)).rowcount == 0:
+            raise TrainingError(404, "That text doesn't exist.")
+
+
+def assign_text(item_id: str, category: str) -> None:
+    _update_text(item_id, "label = ?", category)
+
+
+def unassign_text(item_id: str) -> None:
+    _update_text(item_id, "label = NULL, removed = 0")
+
+
+def remove_text(item_id: str) -> None:
+    _update_text(item_id, "removed = 1")
+
+
+def clear_text() -> None:
+    with closing(_database()) as database, database:
+        database.execute("DELETE FROM items")
+
+
+def export_text(categories: list[str]) -> str:
+    """Writes the text,label CSV that a generated text project reads as data/texts.csv."""
+    with closing(_database()) as database:
+        rows = database.execute("SELECT text, label FROM items WHERE label IS NOT NULL AND removed = 0 ORDER BY seq").fetchall()
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer)
+    writer.writerow(["text", "label"])
+    writer.writerows((text, label) for text, label in rows if label in categories)
+    return buffer.getvalue()
