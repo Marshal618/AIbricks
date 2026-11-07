@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, graph as graphs, labelling, projects, runner, training
+from . import catalogue, code_parser, codegen, graph as graphs, labelling, opendata, projects, runner, training
 
 
 @contextlib.asynccontextmanager
@@ -251,7 +251,7 @@ def download_trained(job_id: str) -> FileResponse:
     handle, path = tempfile.mkstemp(suffix=".zip")
     os.close(handle)
     try:
-        job = training.bundle(job_id, Path(path))
+        job = training.bundle(job_id, Path(path), opendata.sources_markdown())
     except training.TrainingError as error:
         os.unlink(path)
         raise _raise(error) from None
@@ -400,3 +400,47 @@ def unassign_text(item_id: str) -> dict:
 @app.post("/api/label/text/{item_id}/remove", dependencies=[Depends(_needs_json)])
 def remove_text(item_id: str) -> dict:
     return _labelled(labelling.remove_text, item_id)
+
+
+# ------------------------------------------------------------------- open datasets
+
+class OpenDataImport(BaseModel):
+    dataset: str = Field(max_length=200)
+    kind: Literal["image", "text"]
+    mapping: dict[str, str] = Field(max_length=2000)
+    perCategory: int
+
+
+@app.get("/api/open-data/search")
+def search_open_data(kind: Literal["image", "text"], q: str = Query(default="", max_length=100)) -> dict:
+    try:
+        return {"results": opendata.search(q, kind)}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/open-data/inspect")
+def inspect_open_data(kind: Literal["image", "text"], dataset: str = Query(max_length=200)) -> dict:
+    try:
+        return opendata.inspect(dataset, kind)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.post("/api/open-data/import")
+def start_open_data_import(request: OpenDataImport) -> dict:
+    try:
+        return {"job": opendata.start_import(request.dataset, request.kind, request.mapping, request.perCategory)}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/open-data/import")
+def get_open_data_import() -> dict:
+    return opendata.status()
+
+
+@app.delete("/api/open-data/import")
+def cancel_open_data_import() -> dict:
+    opendata.cancel()
+    return {"ok": True}

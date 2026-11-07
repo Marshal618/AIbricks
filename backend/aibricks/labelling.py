@@ -234,6 +234,23 @@ def add_text(data: bytes, kind: str) -> dict:
     return {"added": added, "duplicates": duplicates, "tooLong": too_long, "column": column}
 
 
+def import_texts(rows: list[tuple[str, str]]) -> list[str]:
+    """Stores texts that already have a label. Returns "added" or "duplicate" for each one."""
+    outcomes = []
+    with closing(_database()) as database, database:
+        total = database.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        for text, label in rows:
+            if total >= MAX_TEXT_ITEMS:
+                raise TrainingError(413, f"The text store is full at {MAX_TEXT_ITEMS:,} items.")
+            item_id = hashlib.sha256(text.encode()).hexdigest()[:32]
+            inserted = database.execute("INSERT OR IGNORE INTO items (id, text, label) VALUES (?, ?, ?)", (item_id, text, label)).rowcount
+            total += inserted
+            if not inserted:
+                database.execute("UPDATE items SET label = ? WHERE id = ? AND label IS NULL", (label, item_id))
+            outcomes.append("added" if inserted else "duplicate")
+    return outcomes
+
+
 def text_queue(categories: list[str]) -> dict:
     with closing(_database()) as database:
         rows = database.execute(

@@ -207,7 +207,7 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
         <p className="muted small field-note-top">
           Give each category example images, or choose a folder with a subfolder named after each category.
           Images are copied to this computer's AI Bricks folder and aren't sent anywhere.
-          {" "}<button className="link-button" onClick={onLabel}>Images not sorted yet? Label them first.</button>
+          {" "}<button className="link-button" onClick={onLabel}>No images, or not sorted yet? Find open data or label them first.</button>
         </p>
         <ul className="train-rows">
           {categories.map((name) => (

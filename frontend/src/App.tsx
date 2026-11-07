@@ -481,6 +481,16 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     return null;
   }, [bricks, openProject]);
 
+  /** Gives the model these categories, such as the ones from an open dataset. */
+  const useCategories = useCallback((names: string[]) => {
+    setNodes((current) => current.map((node) => (
+      "classes" in node.data.params
+        ? { ...node, data: { ...node.data, params: { ...node.data.params, classes: names.join(", ") } } }
+        : node
+    )));
+    say("Your model's categories changed, so it needs a new test run before training.");
+  }, [say, setNodes]);
+
   const selectNode = useCallback((id: string) => {
     setPage("design");
     setNodes((current) => current.map((node) => ({ ...node, selected: node.id === id })));
@@ -748,7 +758,7 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
         )}
         {page === "label" && (
           <div className="page">
-            <LabelPage onDesign={() => setPage("design")} onTrain={() => setPage("train")} onExport={() => setPage("export")} />
+            <LabelPage onDesign={() => setPage("design")} onTrain={() => setPage("train")} onExport={() => setPage("export")} onUseCategories={useCategories} />
           </div>
         )}
         {page === "train" && (

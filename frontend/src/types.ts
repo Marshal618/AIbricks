@@ -79,6 +79,41 @@ export interface Analysis {
   labelCategories: string[] | null;
 }
 
+export interface OpenDataResult {
+  id: string;
+  downloads: number;
+  licence: string;
+}
+
+export interface OpenDataInfo {
+  dataset: string;
+  kind: "image" | "text";
+  licence: string;
+  labels: string[];
+  totalRows: number;
+  preview: { image?: string; text?: string }[];
+  namesUsable: boolean;
+  url: string;
+}
+
+export interface OpenDataImport {
+  dataset: string;
+  status: "running" | "finished" | "cancelled" | "failed";
+  perCategory: number;
+  counts: Record<string, number>;
+  added: number;
+  duplicates: number;
+  skipped: number;
+  error: string | null;
+}
+
+export interface OpenDataSource {
+  dataset: string;
+  licence: string;
+  added: number;
+  url: string;
+}
+
 export interface LabelItem {
   id: string;
   text?: string;

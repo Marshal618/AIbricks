@@ -417,3 +417,25 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
 .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .mistake-fix { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .mistake-fix select { min-width: 0; flex: 1 1 80px; padding: 2px 4px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); font-size: 12px; }
+
+/* Find open data */
+.find-search { display: flex; gap: 8px; }
+.find-search input { flex: 1; min-width: 0; padding: 5px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
+.find-results { list-style: none; margin: 8px 0 0; padding: 0; }
+.find-results li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.find-results li:last-child { border-bottom: 0; }
+.find-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.find-detail h3 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.find-detail a { color: var(--accent); }
+.find-detail .card-head { gap: 8px; flex-wrap: wrap; }
+.find-caution { padding: 6px 10px; border-radius: var(--radius); background: var(--warn-tint); }
+.find-preview { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; margin-top: 10px; }
+.find-preview img { width: 100%; aspect-ratio: 1; border-radius: var(--radius); object-fit: cover; background: var(--surface-2); }
+.find-preview-text { display: flex; flex-direction: column; gap: 6px; max-height: 180px; margin-top: 10px; padding: 8px 10px; overflow-y: auto; border-radius: var(--radius); background: var(--surface-2); overflow-wrap: anywhere; }
+.find-heading { margin: 12px 0 6px !important; }
+.find-mapping { list-style: none; display: flex; flex-direction: column; gap: 4px; max-height: 240px; margin: 0; padding: 0; overflow-y: auto; }
+.find-mapping li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 10px; }
+.find-mapping select { min-width: 0; padding: 3px 5px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); font-size: 12px; }
+.find-start { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.find-start input { width: 70px; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); }
+.find-status { margin-top: 10px; }

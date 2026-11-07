@@ -32,6 +32,14 @@ Set `AI_BRICKS_WORKSPACE` to store these files somewhere else.
 The Train page also shows which held-back images the model got wrong. Downloads of these models
 include `review.py` for the same list and `serve.py`, a small FastAPI web API for the trained model.
 
+## Find open data
+
+The Label page can search public labelled datasets on Hugging Face, show each one's licence, match
+its categories to your model's and copy a sample to this computer. Your search words go to Hugging
+Face, but your own data doesn't. Only public, ungated datasets work, and they need a category column
+that the dataset viewer can read. Trained model downloads include `DATA_SOURCES.md`, which credits
+what you imported. Check each dataset's licence yourself before relying on it.
+
 ## Label your data
 
 The Label page sorts unlabelled images and text with one key press each: number keys choose a
@@ -70,6 +78,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/codegen.py` and `brick_sources.py` write the PyTorch project.
 - `backend/aibricks/code_parser.py` turns `model.py` back into blocks without running it.
 - `backend/aibricks/labelling.py` stores unsorted images and text, and makes label suggestions.
+- `backend/aibricks/opendata.py` searches and imports open datasets from Hugging Face.
 - `backend/aibricks/projects.py` stores saved projects as JSON files.
 - `backend/aibricks/runner.py` runs the test in a separate, time-limited process.
 - `backend/aibricks/training.py` stores your images and runs training and predictions.

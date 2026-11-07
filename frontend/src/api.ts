@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, GraphPayload, ImageQueue, ParseReply, PredictAnswer, ProjectData, ProjectRow, TestEvent, TextQueue, TrainingJob } from "./types";
+import type { Analysis, Catalogue, DatasetInfo, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, TestEvent, TextQueue, TrainingJob } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -233,3 +233,27 @@ export const clearUnsortedText = () => send("/api/label/text", "DELETE");
 export function textExportUrl(categories: string[]) {
   return `/api/label/text/export?${new URLSearchParams(categories.map((name) => ["category", name]))}`;
 }
+
+export async function searchOpenData(query: string, kind: "image" | "text"): Promise<OpenDataResult[]> {
+  const response = await fetch(`/api/open-data/search?${new URLSearchParams({ q: query, kind })}`);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return (await response.json()).results;
+}
+
+export async function inspectOpenData(dataset: string, kind: "image" | "text"): Promise<OpenDataInfo> {
+  const response = await fetch(`/api/open-data/inspect?${new URLSearchParams({ dataset, kind })}`);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function startOpenDataImport(dataset: string, kind: "image" | "text", mapping: Record<string, string>, perCategory: number): Promise<OpenDataImport> {
+  return (await sendJson("/api/open-data/import", { dataset, kind, mapping, perCategory })).job;
+}
+
+export async function fetchOpenDataImport(): Promise<{ job: OpenDataImport | null; sources: OpenDataSource[] }> {
+  const response = await fetch("/api/open-data/import");
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const cancelOpenDataImport = () => send("/api/open-data/import", "DELETE");

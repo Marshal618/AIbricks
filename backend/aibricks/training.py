@@ -509,7 +509,7 @@ def predict(job_id: str, data: bytes) -> list[dict]:
     return json.loads(done.stdout.strip().splitlines()[-1])[0]["answers"]
 
 
-def bundle(job_id: str, target: Path) -> Job:
+def bundle(job_id: str, target: Path, credits: str | None = None) -> Job:
     """Writes the project and its trained model, without the user's images, to a zip file."""
     import zipfile
 
@@ -519,4 +519,6 @@ def bundle(job_id: str, target: Path) -> Job:
         for name in job.files:
             archive.write(folder / name, f"{job.slug}/{name}")
         archive.write(folder / "model.pt", f"{job.slug}/model.pt")
+        if credits:
+            archive.writestr(f"{job.slug}/DATA_SOURCES.md", credits)
     return job

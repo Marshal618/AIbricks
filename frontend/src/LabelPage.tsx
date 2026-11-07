@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import * as api from "./api";
 import { useEditor } from "./context";
+import { FindData } from "./FindData";
 import type { ImageQueue, LabelItem, TextQueue } from "./types";
 
 interface Props {
   onDesign: () => void;
   onTrain: () => void;
   onExport: () => void;
+  onUseCategories: (names: string[]) => void;
 }
 
 const UPLOAD_WORKERS = 4;
@@ -25,7 +27,7 @@ interface Adapter {
   remove: (id: string) => Promise<void>;
 }
 
-export function LabelPage({ onDesign, onTrain, onExport }: Props) {
+export function LabelPage({ onDesign, onTrain, onExport, onUseCategories }: Props) {
   const { analysis, mode } = useEditor();
   const beginner = mode === "beginner";
   let body: ReactNode;
@@ -37,9 +39,9 @@ export function LabelPage({ onDesign, onTrain, onExport }: Props) {
       </div>
     );
   } else if (analysis.labelKind === "image") {
-    body = <ImageLabels categories={analysis.labelCategories ?? []} canTrain={Boolean(analysis.categories)} onTrain={onTrain} />;
+    body = <ImageLabels categories={analysis.labelCategories ?? []} canTrain={Boolean(analysis.categories)} onTrain={onTrain} onUseCategories={onUseCategories} />;
   } else if (analysis.labelKind === "text") {
-    body = <TextLabels categories={analysis.labelCategories ?? []} onExport={onExport} />;
+    body = <TextLabels categories={analysis.labelCategories ?? []} onExport={onExport} onUseCategories={onUseCategories} />;
   } else {
     body = (
       <section className="card">
@@ -56,8 +58,8 @@ export function LabelPage({ onDesign, onTrain, onExport }: Props) {
             <h1>Label</h1>
             <p className="muted">
               {beginner
-                ? "Have examples that aren't sorted yet? Tell the model what each one is, one key press at a time."
-                : "Assign a category to unlabelled data using the keyboard."}
+                ? "Find open data, or tell the model what your own examples are, one key press at a time."
+                : "Import open datasets, or assign categories to unlabelled data using the keyboard."}
             </p>
           </div>
         </header>
@@ -220,7 +222,7 @@ function preloadImage(item: LabelItem) {
   new Image().src = api.unsortedImageUrl(item.id);
 }
 
-function ImageLabels({ categories, canTrain, onTrain }: { categories: string[]; canTrain: boolean; onTrain: () => void }) {
+function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categories: string[]; canTrain: boolean; onTrain: () => void; onUseCategories: (names: string[]) => void }) {
   const [queue, setQueue] = useState<ImageQueue | null>(null);
   const [items, setItems] = useState<LabelItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -301,6 +303,7 @@ function ImageLabels({ categories, canTrain, onTrain }: { categories: string[]; 
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
+      <FindData kind="image" categories={categories} onImported={() => void load()} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">
           <h2>Unsorted images</h2>
@@ -385,7 +388,7 @@ const textAdapter: Adapter = {
   remove: api.removeText,
 };
 
-function TextLabels({ categories, onExport }: { categories: string[]; onExport: () => void }) {
+function TextLabels({ categories, onExport, onUseCategories }: { categories: string[]; onExport: () => void; onUseCategories: (names: string[]) => void }) {
   const [queue, setQueue] = useState<TextQueue | null>(null);
   const [items, setItems] = useState<LabelItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -441,6 +444,7 @@ function TextLabels({ categories, onExport }: { categories: string[]; onExport: 
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
+      <FindData kind="text" categories={categories} onImported={() => void load()} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">
           <h2>Your text</h2>
