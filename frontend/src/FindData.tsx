@@ -3,6 +3,7 @@ import * as api from "./api";
 import type { OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource } from "./types";
 
 interface Props {
+  datasetId: string;
   kind: "image" | "text";
   categories: string[];
   onImported: () => void;
@@ -23,7 +24,7 @@ function licenceNote(licence: string) {
   return `Licence: ${licence}. It may limit how you can use the data, such as no commercial use, so read it first.`;
 }
 
-export function FindData({ kind, categories, onImported, onUseCategories }: Props) {
+export function FindData({ datasetId, kind, categories, onImported, onUseCategories }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OpenDataResult[] | null>(null);
@@ -43,7 +44,7 @@ export function FindData({ kind, categories, onImported, onUseCategories }: Prop
     let announced = false;
     const poll = async () => {
       try {
-        const reply = await api.fetchOpenDataImport();
+        const reply = await api.fetchOpenDataImport(datasetId);
         if (stopped) return;
         setJob(reply.job);
         setSources(reply.sources);
@@ -63,7 +64,7 @@ export function FindData({ kind, categories, onImported, onUseCategories }: Prop
     return () => { stopped = true; window.clearInterval(timer); };
     // onImported changes every render, and this should only restart when an import starts or ends.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+  }, [running, datasetId]);
 
   useEffect(() => {
     if (!info) return;
@@ -102,7 +103,7 @@ export function FindData({ kind, categories, onImported, onUseCategories }: Prop
     if (!info) return;
     setProblem(null);
     try {
-      setJob(await api.startOpenDataImport(info.dataset, kind, mapping, perCategory));
+      setJob(await api.startOpenDataImport(info.dataset, kind, mapping, perCategory, datasetId));
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "The import couldn't start.");
     }
@@ -118,7 +119,7 @@ export function FindData({ kind, categories, onImported, onUseCategories }: Prop
           <h2>No data yet?</h2>
           <button className="button button-small" onClick={() => setOpen(true)}>Find open data</button>
         </div>
-        <p className="muted small">Search free labelled datasets on Hugging Face and copy a sample into this project.</p>
+        <p className="muted small">Search free labelled datasets on Hugging Face and copy a sample into this dataset.</p>
         {running && <p className="muted small field-note" role="status">Importing {job?.dataset}…</p>}
       </section>
     );
@@ -181,8 +182,8 @@ export function FindData({ kind, categories, onImported, onUseCategories }: Prop
 
           {matched === 0 && info.namesUsable && (
             <div className="notice field-note">
-              <span>None of these categories match your model's.</span>
-              <button className="button button-small" onClick={() => onUseCategories(info.labels)}>Use these {info.labels.length} categories in my model</button>
+              <span>None of these categories match this dataset's.</span>
+              <button className="button button-small" onClick={() => onUseCategories(info.labels)}>Add these {info.labels.length} categories</button>
             </div>
           )}
 

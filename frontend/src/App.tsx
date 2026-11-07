@@ -6,12 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import * as api from "./api";
 import { BrickNode } from "./BrickNode";
 import { CodePage } from "./CodePage";
+import { DataScreen } from "./DataScreen";
 import { EditorContext, type EditorContextValue } from "./context";
 import { Dock } from "./Dock";
 import { ExportPage } from "./ExportPage";
+import { Home } from "./Home";
 import { depths } from "./graphOrder";
 import { Inspector } from "./Inspector";
-import { LabelPage } from "./LabelPage";
 import { Library, type LibraryFocus } from "./Library";
 import { NewModelDialog } from "./NewModelDialog";
 import { Outline } from "./Outline";
@@ -19,7 +20,7 @@ import { ProjectsDialog } from "./ProjectsDialog";
 import { PortShape } from "./PortGlyph";
 import { EMPTY_TEST, TestPage, type TestState } from "./TestPage";
 import { TrainPage } from "./TrainPage";
-import type { Analysis, Brick, BrickNodeType, Catalogue, GraphPayload, Kit, Mode, ParamValue, ParseReply, ProjectData, TrainingOverride } from "./types";
+import type { Analysis, Brick, BrickNodeType, Catalogue, DatasetSummary, GraphPayload, Kit, Mode, ParamValue, ParseReply, ProjectData, TrainingOverride } from "./types";
 
 const nodeTypes = { brick: BrickNode };
 const STORAGE_KEY = "ai-bricks-build-v1";
@@ -37,6 +38,22 @@ interface Saved {
   edges: Edge[];
   kitId: string | null;
   projectId?: string;
+  datasetId?: string | null;
+}
+
+type Screen = { name: "home" } | { name: "data"; dataset: string | null } | { name: "build" };
+
+function screenFromHash(): Screen {
+  const parts = window.location.hash.replace(/^#\/?/, "").split("/");
+  if (parts[0] === "build") return { name: "build" };
+  if (parts[0] === "data") return { name: "data", dataset: parts[1] || null };
+  return { name: "home" };
+}
+
+function hashOf(screen: Screen) {
+  if (screen.name === "build") return "#/build";
+  if (screen.name === "data") return screen.dataset ? `#/data/${screen.dataset}` : "#/data";
+  return "#/";
 }
 
 const AUTOSAVE_DELAY = 800;
@@ -89,16 +106,30 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   const [projectId, setProjectId] = useState(() => saved?.projectId ?? makeId());
   const [showProjects, setShowProjects] = useState(false);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "failed" | "idle">("idle");
-  const [showWelcome, setShowWelcome] = useState(!saved || saved.nodes.length === 0);
+  const [screen, setScreen] = useState<Screen>(screenFromHash);
+  const [showWelcome, setShowWelcome] = useState(screen.name === "build" && (!saved || saved.nodes.length === 0));
+  const [datasetId, setDatasetId] = useState<string | null>(saved?.datasetId ?? null);
+  const [pendingDataset, setPendingDataset] = useState<DatasetSummary | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [offline, setOffline] = useState(false);
-  const [page, setPage] = useState<"design" | "code" | "test" | "label" | "train" | "export">("design");
+  const [page, setPage] = useState<"design" | "code" | "test" | "train" | "export">("design");
   const [leftTab, setLeftTab] = useState<"library" | "outline">("library");
   const [toast, setToast] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<EditorContextValue["connecting"]>(null);
   const [test, setTest] = useState<TestState>(EMPTY_TEST);
   const toastTimer = useRef<number>();
   const testAbort = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const onHash = () => setScreen(screenFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const goTo = useCallback((next: Screen) => {
+    const hash = hashOf(next);
+    if (window.location.hash !== hash) window.location.hash = hash;
+    setScreen(next);
+  }, []);
 
   const say = useCallback((message: string) => {
     setToast(message);
@@ -146,14 +177,14 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   }, [graphKey, refresh]);
 
   useEffect(() => {
-    const data: Saved = { projectName, training, trainingOverride, nodes, edges, kitId, projectId };
+    const data: Saved = { projectName, training, trainingOverride, nodes, edges, kitId, projectId, datasetId };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* the build still works without saving */ }
-  }, [projectName, training, trainingOverride, nodes, edges, kitId, projectId]);
+  }, [projectName, training, trainingOverride, nodes, edges, kitId, projectId, datasetId]);
 
   // Keeps the open project on disk. A blank canvas isn't worth a place in the list.
   const projectData: ProjectData = useMemo(
-    () => ({ projectName, training, trainingOverride, nodes, edges, kitId }),
-    [projectName, training, trainingOverride, nodes, edges, kitId],
+    () => ({ projectName, training, trainingOverride, nodes, edges, kitId, datasetId }),
+    [projectName, training, trainingOverride, nodes, edges, kitId, datasetId],
   );
   const unsaved = useRef<{ id: string; data: ProjectData } | null>(null);
   const writeProject = useCallback(async (id: string, data: ProjectData) => {
@@ -405,10 +436,18 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setTrainingOverride(null);
     setCodeDraft(null);
     setKitId(kit.id);
+    setDatasetId(pendingDataset?.id ?? null);
+    if (pendingDataset && pendingDataset.categories.length >= 2) {
+      const classes = pendingDataset.categories.join(", ");
+      setNodes((current) => current.map((node) => (
+        "classes" in node.data.params ? { ...node, data: { ...node.data, params: { ...node.data.params, classes } } } : node
+      )));
+    }
+    setPendingDataset(null);
     setTest(EMPTY_TEST);
     setShowWelcome(false);
     setPage("design");
-  }, [bricks, flushProject, setEdges, setNodes]);
+  }, [bricks, flushProject, pendingDataset, setEdges, setNodes]);
 
   const startBlank = useCallback(() => {
     flushProject();
@@ -417,6 +456,8 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setNodes([]);
     setEdges([]);
     setKitId(null);
+    setDatasetId(pendingDataset?.id ?? null);
+    setPendingDataset(null);
     setProjectName("Untitled model");
     setTraining("balanced");
     setTrainingOverride(null);
@@ -424,7 +465,17 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setTest(EMPTY_TEST);
     setShowWelcome(false);
     setPage("design");
-  }, [flushProject, setEdges, setNodes]);
+  }, [flushProject, pendingDataset, setEdges, setNodes]);
+
+  const newModel = useCallback(() => {
+    goTo({ name: "build" });
+    setShowWelcome(true);
+  }, [goTo]);
+
+  const buildWithDataset = useCallback((dataset: DatasetSummary) => {
+    setPendingDataset(dataset);
+    newModel();
+  }, [newModel]);
 
   const openProject = useCallback((id: string, data: ProjectData) => {
     flushProject();
@@ -436,12 +487,14 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setTraining(catalogue.training[data.training] ? data.training : "balanced");
     setTrainingOverride(data.trainingOverride ?? null);
     setKitId(data.kitId ?? null);
+    setDatasetId(data.datasetId ?? null);
+    goTo({ name: "build" });
     setCodeDraft(null);
     setTest(EMPTY_TEST);
     setShowProjects(false);
     setShowWelcome(false);
     setPage("design");
-  }, [bricks, catalogue, flushProject, setEdges, setNodes]);
+  }, [bricks, catalogue, flushProject, goTo, setEdges, setNodes]);
 
   const saveProjectFile = useCallback(() => {
     const body = JSON.stringify({ format: PROJECT_FILE_FORMAT, version: 1, ...projectData }, null, 2);
@@ -477,6 +530,7 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
       nodes,
       edges,
       kitId: typeof data.kitId === "string" ? data.kitId : null,
+      datasetId: null,
     });
     return null;
   }, [bricks, openProject]);
@@ -632,7 +686,6 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     { id: "design", label: "Design", status: issueCount ? `${issueCount} ${issueCount === 1 ? "problem" : "problems"}` : nodes.length ? "Valid" : "Empty", tone: issueCount ? "bad" : nodes.length ? "good" : "" },
     { id: "code", label: "Code", status: codeDraft && codeDraft.text !== codeDraft.base ? "Unconverted edits" : analysis?.ok ? "Generated" : "Waiting", tone: codeDraft && codeDraft.text !== codeDraft.base ? "bad" : analysis?.ok ? "good" : "" },
     { id: "test", label: "Test", status: testStatus, tone: tested ? "good" : testStatus === "Failed" ? "bad" : "" },
-    { id: "label", label: "Label", status: !analysis?.ok ? "Waiting" : analysis.labelKind ? "Optional" : "Not needed", tone: "" },
     { id: "train", label: "Train", status: !analysis?.ok ? "Waiting" : !analysis.categories ? "Use export" : tested ? "Ready" : "Locked", tone: tested && analysis?.categories ? "good" : "" },
     { id: "export", label: "Export", status: tested ? "Ready" : "Locked", tone: tested ? "good" : "" },
   ] as const;
@@ -640,11 +693,59 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   return (
     <EditorContext.Provider value={context}>
       <div className="app">
-        <header className="topbar">
-          <div className="logo">
+        <nav className="appnav" aria-label="Main">
+          <button className="logo" onClick={() => goTo({ name: "home" })}>
             <svg className="logo-mark" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1.5" /><rect x="11" y="1" width="8" height="8" rx="1.5" opacity=".55" /><rect x="1" y="11" width="8" height="8" rx="1.5" opacity=".55" /><rect x="11" y="11" width="8" height="8" rx="1.5" /></svg>
             AI Bricks
+          </button>
+          {([["home", "Home"], ["data", "Data labeller"], ["build", "Model builder"]] as const).map(([name, label]) => (
+            <button
+              key={name}
+              className={`appnav-link${screen.name === name ? " active" : ""}`}
+              aria-current={screen.name === name ? "page" : undefined}
+              onClick={() => {
+                if (name === "build") {
+                  goTo({ name: "build" });
+                  if (!nodes.length) setShowWelcome(true);
+                } else {
+                  goTo(name === "data" ? { name: "data", dataset: null } : { name: "home" });
+                }
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          <div className="spacer" />
+          <div className="mode-switch" role="radiogroup" aria-label="Experience level">
+            {(["beginner", "advanced"] as const).map((value) => (
+              <button key={value} role="radio" aria-checked={mode === value} className={mode === value ? "active" : ""} onClick={() => setMode(value)}>
+                {value === "beginner" ? "Beginner" : "Advanced"}
+              </button>
+            ))}
           </div>
+        </nav>
+        {offline && <div className="offline" role="alert">The AI Bricks server isn't responding. Your work is saved in this browser and will be checked again when it returns.</div>}
+
+        {screen.name === "home" && (
+          <div className="page">
+            <Home
+              mode={mode}
+              currentProjectId={projectId}
+              onNewModel={newModel}
+              onContinueModel={() => goTo({ name: "build" })}
+              onOpenModel={(id) => { api.fetchProject(id).then((data) => openProject(id, data)).catch(() => say("That model could not open.")); }}
+              onOpenData={() => goTo({ name: "data", dataset: null })}
+              onOpenDataset={(id) => goTo({ name: "data", dataset: id })}
+            />
+          </div>
+        )}
+        {screen.name === "data" && (
+          <div className="page">
+            <DataScreen mode={mode} datasetId={screen.dataset} onOpen={(id) => goTo({ name: "data", dataset: id })} onBuild={buildWithDataset} />
+          </div>
+        )}
+        {screen.name === "build" && (<>
+        <header className="topbar">
           <label className="project-name">
             <span className="visually-hidden">Model name</span>
             <input value={projectName} maxLength={60} onChange={(event) => setProjectName(event.target.value)} />
@@ -663,20 +764,12 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
             ))}
           </nav>
           <div className="spacer" />
-          <div className="mode-switch" role="radiogroup" aria-label="Experience level">
-            {(["beginner", "advanced"] as const).map((value) => (
-              <button key={value} role="radio" aria-checked={mode === value} className={mode === value ? "active" : ""} onClick={() => setMode(value)}>
-                {value === "beginner" ? "Beginner" : "Advanced"}
-              </button>
-            ))}
-          </div>
           {tested
             ? analysis?.categories && page !== "train" && page !== "export"
               ? <button className="button button-primary" onClick={() => setPage("train")}>Continue to training</button>
               : page !== "export" && <button className="button button-primary" onClick={() => setPage("export")}>Continue to export</button>
             : <button className="button button-primary" disabled={!analysis?.ok || test.running} onClick={runTest}>{test.running ? "Testing…" : "Run test"}</button>}
         </header>
-        {offline && <div className="offline" role="alert">The AI Bricks server isn't responding. Your work is saved in this browser and will be checked again when it returns.</div>}
 
         <div className={`design-page${page === "design" ? "" : " is-hidden"}`}>
           <aside className="left-pane" aria-label="Components and outline">
@@ -756,14 +849,18 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
             <TestPage test={test} nodes={nodes} edges={edges} onRun={runTest} onDesign={() => setPage("design")} />
           </div>
         )}
-        {page === "label" && (
-          <div className="page">
-            <LabelPage onDesign={() => setPage("design")} onTrain={() => setPage("train")} onExport={() => setPage("export")} onUseCategories={useCategories} />
-          </div>
-        )}
         {page === "train" && (
           <div className="page">
-            <TrainPage graph={graph} onDesign={() => setPage("design")} onTest={() => setPage("test")} onExport={() => setPage("export")} onLabel={() => setPage("label")} />
+            <TrainPage
+              graph={graph}
+              onDesign={() => setPage("design")}
+              onTest={() => setPage("test")}
+              onExport={() => setPage("export")}
+              datasetId={datasetId}
+              onDatasetChange={setDatasetId}
+              onOpenData={(id) => goTo({ name: "data", dataset: id })}
+              onUseCategories={useCategories}
+            />
           </div>
         )}
         {page === "export" && (
@@ -786,11 +883,18 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
           {saveState !== "idle" && <span className={saveState === "failed" ? "tone-bad" : ""}>{saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Couldn't save to disk"}</span>}
           <span className={offline ? "tone-bad" : ""}>{offline ? "Server offline" : "Server connected"}</span>
         </footer>
+        </>)}
         {showProjects && (
           <ProjectsDialog currentId={projectId} onOpen={openProject} onOpenFile={openProjectFile} onSaveFile={saveProjectFile} onClose={() => setShowProjects(false)} />
         )}
-        {showWelcome && (
-          <NewModelDialog hasModel={nodes.length > 0} onKit={loadKit} onBlank={startBlank} onCancel={() => setShowWelcome(false)} />
+        {showWelcome && screen.name === "build" && (
+          <NewModelDialog
+            hasModel={nodes.length > 0}
+            forDataset={pendingDataset}
+            onKit={loadKit}
+            onBlank={startBlank}
+            onCancel={() => { setShowWelcome(false); setPendingDataset(null); }}
+          />
         )}
       </div>
     </EditorContext.Provider>

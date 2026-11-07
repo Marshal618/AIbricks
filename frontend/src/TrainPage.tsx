@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEv
 import * as api from "./api";
 import { useEditor } from "./context";
 import { LossChart } from "./LossChart";
-import type { DatasetInfo, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
+import type { DatasetInfo, DatasetSummary, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
 
 interface Props {
   graph: GraphPayload;
   onDesign: () => void;
   onTest: () => void;
   onExport: () => void;
-  onLabel: () => void;
+  datasetId: string | null;
+  onDatasetChange: (id: string | null) => void;
+  onOpenData: (id: string | null) => void;
+  onUseCategories: (names: string[]) => void;
 }
 
 interface Upload {
@@ -39,28 +42,40 @@ function duration(seconds: number) {
   return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
 
-export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props) {
+export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onDatasetChange, onOpenData, onUseCategories }: Props) {
   const { analysis, mode } = useEditor();
   const beginner = mode === "beginner";
   const categories = analysis?.categories ?? null;
   const categoryKey = JSON.stringify(categories);
   const [dataset, setDataset] = useState<DatasetInfo | null>(null);
+  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
   const [job, setJob] = useState<TrainingJob | null>(null);
   const [upload, setUpload] = useState<Upload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const folderInput = useRef<HTMLInputElement>(null);
 
+  const refreshDatasets = useCallback(() => {
+    api.fetchDatasets().then(setDatasets).catch(() => setDatasets([]));
+  }, []);
+  useEffect(refreshDatasets, [refreshDatasets]);
+
+  const chosen = datasets?.find((row) => row.id === datasetId && row.kind === "image") ?? null;
+  const chosenId = chosen?.id ?? null;
+
   const loadDataset = useCallback(async () => {
-    if (!categories) return;
+    if (!categories || !chosenId) {
+      setDataset(null);
+      return;
+    }
     try {
-      setDataset(await api.fetchDataset(categories));
+      setDataset(await api.fetchDataset(categories, chosenId));
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "The image list could not load.");
     }
     // categoryKey stands in for the array, which is new on every check.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryKey]);
+  }, [categoryKey, chosenId]);
 
   useEffect(() => { void loadDataset(); }, [loadDataset]);
 
@@ -91,7 +106,7 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
     const worker = async () => {
       for (let item = queue.shift(); item; item = queue.shift()) {
         try {
-          const reply = await api.uploadImage(item.category, item.file);
+          const reply = await api.uploadImage(item.category, item.file, chosenId as string);
           if (reply.duplicate) state.duplicates += 1; else state.added += 1;
         } catch (problem) {
           state.rejected.push(`${item.file.name}: ${problem instanceof Error ? problem.message : "could not be read."}`);
@@ -104,7 +119,8 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
     state.running = false;
     setUpload({ ...state });
     await loadDataset();
-  }, [loadDataset]);
+    refreshDatasets();
+  }, [chosenId, loadDataset, refreshDatasets]);
 
   const addToCategory = (category: string, files: FileList | null) => {
     if (files) void send(Array.from(files).filter((file) => !file.name.startsWith(".")).map((file) => ({ file, category })), 0);
@@ -127,7 +143,7 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
   const clear = async (category: string) => {
     if (!window.confirm(`Remove all images from "${category}"? Your original files aren't touched.`)) return;
     try {
-      await api.clearImages(category);
+      await api.clearImages(category, chosenId as string);
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "The images could not be removed.");
     }
@@ -138,7 +154,7 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
     setError(null);
     setStarting(true);
     try {
-      setJob(await api.startTraining(graph));
+      setJob(await api.startTraining(graph, chosenId as string));
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : "Training could not start.");
     } finally {
@@ -172,15 +188,20 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
         <section className="card">
           <h2>This model trains from the export</h2>
           <p className="muted">Training inside the app covers models that sort images into categories. Other models train on your computer from the downloaded project.</p>
-          <button className="button field-note" onClick={onExport}>Go to Export</button>
+          <div className="label-buttons train-other">
+            {analysis.labelKind === "text" && <button className="button" onClick={() => onOpenData(null)}>Prepare text in the Data labeller</button>}
+            <button className="button" onClick={onExport}>Go to Export</button>
+          </div>
         </section>
       </Shell>
     );
   }
 
   const tested = analysis.tested;
-  const stale = job !== null && job.buildHash !== analysis.buildHash;
-  const ready = (dataset?.problems.length ?? 1) === 0;
+  const stale = job !== null && (job.buildHash !== analysis.buildHash || job.dataset !== chosenId);
+  const ready = chosen !== null && (dataset?.problems.length ?? 1) === 0;
+  const mismatch = chosen !== null && JSON.stringify([...chosen.categories].sort()) !== JSON.stringify([...categories].sort());
+  const imageDatasets = datasets?.filter((row) => row.kind === "image") ?? [];
   const counts = dataset?.counts ?? {};
   const suggested = dataset?.suggestedPerCategory ?? 20;
   const fewImages = dataset !== null && categories.some((name) => (counts[name] ?? 0) < suggested);
@@ -192,39 +213,88 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
 
       <section className="card">
         <div className="card-head">
-          <h2>{beginner ? "Step 1: Add your images" : "Dataset"}</h2>
-          <button className="button button-small" disabled={upload?.running} onClick={() => folderInput.current?.click()}>Choose a folder</button>
-          <input
-            ref={folderInput}
-            className="visually-hidden"
-            type="file"
-            aria-label="Choose a folder with one subfolder per category"
-            onChange={addFolder}
-            tabIndex={-1}
-            {...{ webkitdirectory: "" }}
-          />
+          <h2>{beginner ? "Step 1: Choose your data" : "Dataset"}</h2>
+          {chosen && <button className="button button-small" onClick={() => onOpenData(chosen.id)}>Open in Data labeller</button>}
         </div>
-        <p className="muted small field-note-top">
-          Give each category example images, or choose a folder with a subfolder named after each category.
-          Images are copied to this computer's AI Bricks folder and aren't sent anywhere.
-          {" "}<button className="link-button" onClick={onLabel}>No images, or not sorted yet? Find open data or label them first.</button>
-        </p>
-        <ul className="train-rows">
-          {categories.map((name) => (
-            <CategoryRow
-              key={name}
-              name={name}
-              count={counts[name] ?? 0}
-              busy={upload?.running ?? false}
-              locked={running}
-              onAdd={(files) => addToCategory(name, files)}
-              onClear={() => void clear(name)}
-            />
-          ))}
-        </ul>
-        {upload && <UploadSummary upload={upload} />}
-        {dataset && dataset.problems.length > 0 && <p className="small muted field-note">{dataset.problems.join(" ")}</p>}
-        {ready && fewImages && <p className="small muted field-note">You can train now, but results are more trustworthy with at least {suggested} images per category.</p>}
+        {datasets !== null && imageDatasets.length > 0 && (
+          <label className="field train-dataset">
+            <span className="visually-hidden">Dataset</span>
+            <select value={chosenId ?? ""} disabled={running} onChange={(event) => onDatasetChange(event.target.value || null)}>
+              <option value="">Choose a dataset…</option>
+              {imageDatasets.map((row) => <option key={row.id} value={row.id}>{row.name} ({row.labelled.toLocaleString()} labelled)</option>)}
+            </select>
+          </label>
+        )}
+        {datasets !== null && !chosen && (
+          <div className="train-no-data">
+            <p className="muted small">{imageDatasets.length ? "Or start a new one for this model's categories." : "This model needs a dataset to learn from. Start one with this model's categories, then add images or find open data."}</p>
+            <div className="label-buttons train-other">
+              <button
+                className="button button-small"
+                onClick={() => {
+                  setError(null);
+                  api.createDataset(graph.projectName.slice(0, 60) || "My dataset", "image", categories)
+                    .then((made) => { refreshDatasets(); onDatasetChange(made.id); })
+                    .catch((problem) => setError(problem instanceof Error ? problem.message : "The dataset couldn't be created."));
+                }}
+              >
+                Create a dataset for this model
+              </button>
+              <button className="button button-small" onClick={() => onOpenData(null)}>Open the Data labeller</button>
+            </div>
+          </div>
+        )}
+        {chosen && mismatch && (
+          <div className="notice field-note">
+            <span>This dataset's categories are {chosen.categories.join(", ") || "not set yet"}, but your model's are {categories.join(", ")}.</span>
+            <span className="label-buttons">
+              {chosen.categories.length >= 2 && <button className="button button-small" disabled={running} onClick={() => onUseCategories(chosen.categories)}>Use the dataset's in my model</button>}
+              <button
+                className="button button-small"
+                disabled={running}
+                onClick={() => {
+                  api.addDatasetCategories(chosen.id, categories).then(refreshDatasets)
+                    .catch((problem) => setError(problem instanceof Error ? problem.message : "The categories couldn't be added."));
+                }}
+              >
+                Add my model's to the dataset
+              </button>
+            </span>
+          </div>
+        )}
+        {chosen && (
+          <>
+            <div className="card-head train-add-head">
+              <p className="muted small">Add more images here, or choose a folder with a subfolder for each category. They're copied to this computer and aren't sent anywhere.</p>
+              <button className="button button-small" disabled={upload?.running} onClick={() => folderInput.current?.click()}>Choose a folder</button>
+              <input
+                ref={folderInput}
+                className="visually-hidden"
+                type="file"
+                aria-label="Choose a folder with one subfolder per category"
+                onChange={addFolder}
+                tabIndex={-1}
+                {...{ webkitdirectory: "" }}
+              />
+            </div>
+            <ul className="train-rows">
+              {categories.map((name) => (
+                <CategoryRow
+                  key={name}
+                  name={name}
+                  count={counts[name] ?? 0}
+                  busy={upload?.running ?? false}
+                  locked={running}
+                  onAdd={(files) => addToCategory(name, files)}
+                  onClear={() => void clear(name)}
+                />
+              ))}
+            </ul>
+            {upload && <UploadSummary upload={upload} />}
+            {dataset && dataset.problems.length > 0 && <p className="small muted field-note">{dataset.problems.join(" ")}</p>}
+            {ready && fewImages && <p className="small muted field-note">You can train now, but results are more trustworthy with at least {suggested} images per category.</p>}
+          </>
+        )}
       </section>
 
       <section className="card">
@@ -245,7 +315,7 @@ export function TrainPage({ graph, onDesign, onTest, onExport, onLabel }: Props)
         {tested && !job && <p className="muted small">Training uses this computer, so it may slow other apps. It keeps running if you leave this page.</p>}
         {tested && job && !running && <p className="muted small">Training again replaces the model below.</p>}
         {job && stale && !running && (
-          <div className="notice field-note">The results below came from an earlier version of this model. Train again to try the current one.</div>
+          <div className="notice field-note">These results came from an earlier version of this model or a different dataset. Train again to try the current one.</div>
         )}
         {job && <Progress job={job} beginner={beginner} perEpoch={elapsedPerEpoch} />}
       </section>

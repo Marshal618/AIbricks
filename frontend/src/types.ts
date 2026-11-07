@@ -79,6 +79,17 @@ export interface Analysis {
   labelCategories: string[] | null;
 }
 
+export interface DatasetSummary {
+  id: string;
+  name: string;
+  kind: "image" | "text";
+  categories: string[];
+  counts: Record<string, number>;
+  labelled: number;
+  unsorted: number;
+  updatedAt: number;
+}
+
 export interface OpenDataResult {
   id: string;
   downloads: number;
@@ -168,6 +179,7 @@ export interface TrainingJob {
   error: string | null;
   elapsedSeconds: number;
   stage: "training" | "reviewing";
+  dataset: string;
   review: TrainingReview | null;
   reviewError: string | null;
 }
@@ -203,6 +215,7 @@ export interface ProjectData {
   nodes: BrickNodeType[];
   edges: Edge[];
   kitId: string | null;
+  datasetId?: string | null;
 }
 
 export interface PredictAnswer {

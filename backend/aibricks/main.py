@@ -8,7 +8,7 @@ import os
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, graph as graphs, labelling, opendata, projects, runner, training
+from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, training
 
 
 @contextlib.asynccontextmanager
@@ -138,6 +138,18 @@ def _raise(error: training.TrainingError) -> HTTPException:
     return HTTPException(error.status, {"message": error.message})
 
 
+def _scope(dataset: str = Query(default=training.DEFAULT_DATASET, max_length=40)) -> str:
+    """The dataset a request applies to."""
+    try:
+        datasets.require(dataset)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return dataset
+
+
+Scope = Annotated[str, Depends(_scope)]
+
+
 async def _read_upload(request: Request, limit: int = training.MAX_IMAGE_BYTES) -> bytes:
     """Reads one raw image. Requiring this content type stops other websites posting files here."""
     if request.headers.get("content-type") != "application/octet-stream":
@@ -151,29 +163,29 @@ async def _read_upload(request: Request, limit: int = training.MAX_IMAGE_BYTES) 
 
 
 @app.get("/api/dataset")
-def get_dataset(category: list[str] = Query(default=[], max_length=100)) -> dict:
+def get_dataset(dataset: Scope, category: list[str] = Query(default=[], max_length=100)) -> dict:
     return {
-        "counts": training.counts(category),
+        "counts": training.counts(category, dataset),
         "minPerCategory": training.MIN_PER_CATEGORY,
         "minTotal": training.MIN_TOTAL,
         "suggestedPerCategory": training.SUGGESTED_PER_CATEGORY,
-        "problems": training.readiness_problems(category),
+        "problems": training.readiness_problems(category, dataset),
     }
 
 
 @app.post("/api/dataset/images")
-async def add_dataset_image(request: Request, category: str = Query(min_length=1, max_length=200)) -> dict:
+async def add_dataset_image(request: Request, dataset: Scope, category: str = Query(min_length=1, max_length=200)) -> dict:
     data = await _read_upload(request)
     try:
-        return await run_in_threadpool(training.add_image, category, data)
+        return await run_in_threadpool(training.add_image, category, data, dataset)
     except training.TrainingError as error:
         raise _raise(error) from None
 
 
 @app.delete("/api/dataset/images")
-def clear_dataset_images(category: str = Query(min_length=1, max_length=200)) -> dict:
+def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max_length=200)) -> dict:
     try:
-        training.clear_category(category)
+        training.clear_category(category, dataset)
     except training.TrainingError as error:
         raise _raise(error) from None
     return {"ok": True}
@@ -185,7 +197,7 @@ def get_training() -> dict:
 
 
 @app.post("/api/train")
-def start_training(graph: graphs.GraphIn) -> dict:
+def start_training(graph: graphs.GraphIn, dataset: Scope) -> dict:
     analysis = graphs.analyse(graph)
     if not analysis.ok:
         raise HTTPException(422, {"message": "Fix the build's issues first.", "issues": _issues_json(analysis)})
@@ -200,7 +212,7 @@ def start_training(graph: graphs.GraphIn) -> dict:
         raise HTTPException(409, {"message": "Wait for the model to finish making suggestions."})
     epochs = int(codegen.training_settings(graph)["epochs"])
     try:
-        job = training.start(graph.projectName, codegen.slug(graph.projectName), build_hash, files, names, epochs)
+        job = training.start(graph.projectName, codegen.slug(graph.projectName), build_hash, files, names, epochs, dataset)
     except training.TrainingError as error:
         raise _raise(error) from None
     return {"job": training.public(job)}
@@ -248,10 +260,11 @@ def fix_mistake(job_id: str, index: int, fix: MistakeFix) -> dict:
 @app.get("/api/train/{job_id}/download")
 def download_trained(job_id: str) -> FileResponse:
     """Returns the project with its trained model. The user's images are not included."""
+    current = training.current()
     handle, path = tempfile.mkstemp(suffix=".zip")
     os.close(handle)
     try:
-        job = training.bundle(job_id, Path(path), opendata.sources_markdown())
+        job = training.bundle(job_id, Path(path), opendata.sources_markdown(current.dataset) if current else None)
     except training.TrainingError as error:
         os.unlink(path)
         raise _raise(error) from None
@@ -313,93 +326,93 @@ def _labelled(action, *arguments):
 
 
 @app.post("/api/label/images")
-async def add_unsorted_image(request: Request) -> dict:
+async def add_unsorted_image(request: Request, dataset: Scope) -> dict:
     data = await _read_upload(request)
     try:
-        return await run_in_threadpool(labelling.add_image, data)
+        return await run_in_threadpool(labelling.add_image, data, dataset)
     except training.TrainingError as error:
         raise _raise(error) from None
 
 
 @app.get("/api/label/images")
-def get_image_queue() -> dict:
-    return labelling.queue()
+def get_image_queue(dataset: Scope) -> dict:
+    return labelling.queue(dataset)
 
 
 @app.delete("/api/label/images")
-def clear_unsorted_images() -> dict:
-    return _labelled(labelling.clear_images)
+def clear_unsorted_images(dataset: Scope) -> dict:
+    return _labelled(labelling.clear_images, dataset)
 
 
 @app.post("/api/label/suggest", dependencies=[Depends(_needs_json)])
-def suggest_labels() -> dict:
-    return _labelled(labelling.start_suggestions)
+def suggest_labels(dataset: Scope) -> dict:
+    return _labelled(labelling.start_suggestions, dataset)
 
 
 @app.get("/api/label/images/{image_id}/file")
-def get_unsorted_image(image_id: str) -> FileResponse:
+def get_unsorted_image(image_id: str, dataset: Scope) -> FileResponse:
     try:
-        path = labelling.image_file(image_id)
+        path = labelling.image_file(image_id, dataset)
     except training.TrainingError as error:
         raise _raise(error) from None
     return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/label/images/{image_id}/assign")
-def assign_image(image_id: str, choice: LabelChoice) -> dict:
-    return _labelled(labelling.assign_image, image_id, choice.category)
+def assign_image(image_id: str, choice: LabelChoice, dataset: Scope) -> dict:
+    return _labelled(labelling.assign_image, image_id, choice.category, dataset)
 
 
 @app.post("/api/label/images/{image_id}/unassign")
-def unassign_image(image_id: str, undo: LabelUndo) -> dict:
-    return _labelled(labelling.unassign_image, image_id, undo.category)
+def unassign_image(image_id: str, undo: LabelUndo, dataset: Scope) -> dict:
+    return _labelled(labelling.unassign_image, image_id, undo.category, dataset)
 
 
 @app.post("/api/label/images/{image_id}/remove", dependencies=[Depends(_needs_json)])
-def remove_image(image_id: str) -> dict:
-    return _labelled(labelling.remove_image, image_id)
+def remove_image(image_id: str, dataset: Scope) -> dict:
+    return _labelled(labelling.remove_image, image_id, dataset)
 
 
 @app.post("/api/label/text")
-async def add_unsorted_text(request: Request, kind: Literal["csv", "lines"] = "lines") -> dict:
+async def add_unsorted_text(request: Request, dataset: Scope, kind: Literal["csv", "lines"] = "lines") -> dict:
     data = await _read_upload(request, labelling.MAX_TEXT_FILE_BYTES)
     try:
-        return await run_in_threadpool(labelling.add_text, data, kind)
+        return await run_in_threadpool(labelling.add_text, data, kind, dataset)
     except training.TrainingError as error:
         raise _raise(error) from None
 
 
 @app.get("/api/label/text")
-def get_text_queue(category: list[str] = Query(default=[], max_length=100)) -> dict:
-    return labelling.text_queue(category)
+def get_text_queue(dataset: Scope, category: list[str] = Query(default=[], max_length=100)) -> dict:
+    return labelling.text_queue(category, dataset)
 
 
 @app.delete("/api/label/text")
-def clear_unsorted_text() -> dict:
-    return _labelled(labelling.clear_text)
+def clear_unsorted_text(dataset: Scope) -> dict:
+    return _labelled(labelling.clear_text, dataset)
 
 
 @app.get("/api/label/text/export")
-def export_text_labels(category: list[str] = Query(default=[], max_length=100)) -> Response:
+def export_text_labels(dataset: Scope, category: list[str] = Query(default=[], max_length=100)) -> Response:
     return Response(
-        labelling.export_text(category), media_type="text/csv",
+        labelling.export_text(category, dataset), media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="texts.csv"'},
     )
 
 
 @app.post("/api/label/text/{item_id}/assign")
-def assign_text(item_id: str, choice: LabelChoice) -> dict:
-    return _labelled(labelling.assign_text, item_id, choice.category)
+def assign_text(item_id: str, choice: LabelChoice, dataset: Scope) -> dict:
+    return _labelled(labelling.assign_text, item_id, choice.category, dataset)
 
 
 @app.post("/api/label/text/{item_id}/unassign", dependencies=[Depends(_needs_json)])
-def unassign_text(item_id: str) -> dict:
-    return _labelled(labelling.unassign_text, item_id)
+def unassign_text(item_id: str, dataset: Scope) -> dict:
+    return _labelled(labelling.unassign_text, item_id, dataset)
 
 
 @app.post("/api/label/text/{item_id}/remove", dependencies=[Depends(_needs_json)])
-def remove_text(item_id: str) -> dict:
-    return _labelled(labelling.remove_text, item_id)
+def remove_text(item_id: str, dataset: Scope) -> dict:
+    return _labelled(labelling.remove_text, item_id, dataset)
 
 
 # ------------------------------------------------------------------- open datasets
@@ -428,19 +441,81 @@ def inspect_open_data(kind: Literal["image", "text"], dataset: str = Query(max_l
 
 
 @app.post("/api/open-data/import")
-def start_open_data_import(request: OpenDataImport) -> dict:
+def start_open_data_import(request: OpenDataImport, dataset: Scope) -> dict:
     try:
-        return {"job": opendata.start_import(request.dataset, request.kind, request.mapping, request.perCategory)}
+        return {"job": opendata.start_import(request.dataset, request.kind, request.mapping, request.perCategory, dataset)}
     except training.TrainingError as error:
         raise _raise(error) from None
 
 
 @app.get("/api/open-data/import")
-def get_open_data_import() -> dict:
-    return opendata.status()
+def get_open_data_import(dataset: Scope) -> dict:
+    return opendata.status(dataset)
 
 
 @app.delete("/api/open-data/import")
 def cancel_open_data_import() -> dict:
     opendata.cancel()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- saved datasets
+
+class DatasetRename(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+class CategoryNames(BaseModel):
+    names: list[str] = Field(max_length=datasets.MAX_CATEGORIES)
+
+
+class CategoryRename(BaseModel):
+    old: str = Field(max_length=200)
+    new: str = Field(max_length=200)
+
+
+def _dataset_reply(action, *arguments) -> dict:
+    try:
+        return action(*arguments)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/datasets")
+def list_datasets() -> dict:
+    return {"datasets": datasets.listing()}
+
+
+@app.post("/api/datasets")
+def create_dataset(request: datasets.DatasetIn) -> dict:
+    return _dataset_reply(datasets.create, request)
+
+
+@app.get("/api/datasets/{dataset_id}")
+def get_saved_dataset(dataset_id: str) -> dict:
+    return _dataset_reply(datasets.get, dataset_id)
+
+
+@app.put("/api/datasets/{dataset_id}/name")
+def rename_dataset(dataset_id: str, request: DatasetRename) -> dict:
+    return _dataset_reply(datasets.rename, dataset_id, request.name)
+
+
+@app.post("/api/datasets/{dataset_id}/categories")
+def add_dataset_categories(dataset_id: str, request: CategoryNames) -> dict:
+    return _dataset_reply(datasets.add_categories, dataset_id, request.names)
+
+
+@app.put("/api/datasets/{dataset_id}/categories")
+def rename_dataset_category(dataset_id: str, request: CategoryRename) -> dict:
+    return _dataset_reply(datasets.rename_category, dataset_id, request.old, request.new)
+
+
+@app.delete("/api/datasets/{dataset_id}/categories")
+def remove_dataset_category(dataset_id: str, name: str = Query(max_length=200)) -> dict:
+    return _dataset_reply(datasets.remove_category, dataset_id, name)
+
+
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset(dataset_id: str) -> dict:
+    return _labelled(datasets.delete, dataset_id)

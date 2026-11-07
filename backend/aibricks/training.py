@@ -42,6 +42,8 @@ _EPOCH_LINE = re.compile(
     r"^Epoch (\d+)/(\d+)\s+training loss (\S+)\s+check loss (\S+)\s+check accuracy (\S+)%$"
 )
 
+DEFAULT_DATASET = "default"
+_DATASET_ID = re.compile(r"^[0-9a-f]{12}$")
 _lock = threading.RLock()
 _job: "Job | None" = None
 _process: subprocess.Popen | None = None
@@ -65,18 +67,30 @@ def workspace() -> Path:
 
 # ------------------------------------------------------------------- the dataset
 
-def _category_folder(name: str) -> Path:
-    return workspace() / "datasets" / hashlib.sha256(name.encode()).hexdigest()[:24]
+def root(dataset: str = DEFAULT_DATASET) -> Path:
+    """The folder holding one dataset's images and labels."""
+    if dataset == DEFAULT_DATASET:
+        return workspace()
+    if not _DATASET_ID.match(dataset):
+        raise TrainingError(404, "That dataset doesn't exist.")
+    return workspace() / "collections" / dataset
 
 
-def removed_folder() -> Path:
+def _category_folder(name: str, dataset: str = DEFAULT_DATASET) -> Path:
+    return root(dataset) / "datasets" / hashlib.sha256(name.encode()).hexdigest()[:24]
+
+
+def removed_folder(dataset: str = DEFAULT_DATASET) -> Path:
     """Images removed while labelling or reviewing, kept so that Undo can bring them back."""
-    return workspace() / "inbox" / "removed"
+    return root(dataset) / "inbox" / "removed"
 
 
 def image_total() -> int:
-    folders = list((workspace() / "datasets").glob("*")) + [workspace() / "inbox" / "images"]
-    return sum(len(_images_in(folder)) for folder in folders)
+    total = 0
+    for base in [workspace(), *(workspace() / "collections").glob("*")]:
+        for folder in [*(base / "datasets").glob("*"), base / "inbox" / "images"]:
+            total += len(_images_in(folder))
+    return total
 
 
 def is_running() -> bool:
@@ -107,12 +121,12 @@ def read_image(data: bytes) -> str:
         raise TrainingError(422, "This file isn't a readable JPEG, PNG, BMP or WebP image.") from None
 
 
-def add_image(category: str, data: bytes) -> dict:
+def add_image(category: str, data: bytes, dataset: str = DEFAULT_DATASET) -> dict:
     extension = read_image(data)
     with _lock:
         if image_total() >= MAX_IMAGES:
             raise TrainingError(413, f"The image store is full at {MAX_IMAGES:,} images. Remove some first.")
-        folder = _category_folder(category)
+        folder = _category_folder(category, dataset)
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / (hashlib.sha256(data).hexdigest()[:32] + extension)
         duplicate = target.exists()
@@ -121,29 +135,29 @@ def add_image(category: str, data: bytes) -> dict:
             temporary.write_bytes(data)
             os.replace(temporary, target)
         # It has a label now, so it no longer waits to be sorted.
-        (workspace() / "inbox" / "images" / target.name).unlink(missing_ok=True)
+        (root(dataset) / "inbox" / "images" / target.name).unlink(missing_ok=True)
     return {"duplicate": duplicate, "count": len(_images_in(folder))}
 
 
-def counts(names: list[str]) -> dict[str, int]:
-    return {name: len(_images_in(_category_folder(name))) for name in names}
+def counts(names: list[str], dataset: str = DEFAULT_DATASET) -> dict[str, int]:
+    return {name: len(_images_in(_category_folder(name, dataset))) for name in names}
 
 
-def clear_category(category: str) -> None:
+def clear_category(category: str, dataset: str = DEFAULT_DATASET) -> None:
     with _lock:
         if _job and _job.status == "running":
             raise TrainingError(409, "Stop training before removing images.")
-        shutil.rmtree(_category_folder(category), ignore_errors=True)
+        shutil.rmtree(_category_folder(category, dataset), ignore_errors=True)
 
 
-def readiness_problems(names: list[str]) -> list[str]:
+def readiness_problems(names: list[str], dataset: str = DEFAULT_DATASET) -> list[str]:
     problems = []
     for name in names:
         if "/" in name or name in {".", ".."} or name.startswith("."):
             problems.append(f'Rename the category "{name}". In-app training needs names that work as folder names, so no slashes or leading dots.')
     if len({name.casefold() for name in names}) != len(names):
         problems.append("Two categories differ only by capital letters. Give them different names.")
-    amounts = counts(names)
+    amounts = counts(names, dataset)
     short = [name for name, amount in amounts.items() if amount < MIN_PER_CATEGORY]
     if short:
         problems.append(f"Add at least {MIN_PER_CATEGORY} images to: {', '.join(short)}.")
@@ -178,6 +192,7 @@ class Job:
     stage: str = "training"
     review: dict | None = None
     reviewError: str | None = None
+    dataset: str = DEFAULT_DATASET
 
 
 def _folder(job: Job) -> Path:
@@ -351,20 +366,20 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
 
 
-def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], names: list[str], epochs: int) -> Job:
+def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], names: list[str], epochs: int, dataset: str = DEFAULT_DATASET) -> Job:
     """Starts training in the background. Replaces the previous trained model."""
     global _job, _process
     with _lock:
         if current() is not None and _job.status == "running":
             raise TrainingError(409, "A model is already training. Stop it first.")
-        problems = readiness_problems(names)
+        problems = readiness_problems(names, dataset)
         if problems:
             raise TrainingError(422, " ".join(problems))
-        amounts = counts(names)
+        amounts = counts(names, dataset)
         job = Job(
             id=uuid.uuid4().hex[:12], projectName=project_name, slug=slug, buildHash=build_hash,
             categories=amounts, baseline=max(amounts.values()) / sum(amounts.values()),
-            files=sorted(files), totalEpochs=epochs, startedAt=time.time(),
+            files=sorted(files), totalEpochs=epochs, startedAt=time.time(), dataset=dataset,
         )
         folder = _folder(job)
         folder.mkdir(parents=True)
@@ -373,7 +388,7 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
         images = folder / "data" / "images"
         images.mkdir(parents=True)
         for name in names:
-            (images / name).symlink_to(_category_folder(name).resolve(), target_is_directory=True)
+            (images / name).symlink_to(_category_folder(name, dataset).resolve(), target_is_directory=True)
         for old in (workspace() / "runs").iterdir():
             if old != folder:
                 shutil.rmtree(old, ignore_errors=True)
@@ -426,17 +441,18 @@ def _mistake(job: Job, index: int) -> dict:
     return mistakes[index]
 
 
-def _mistake_path(entry: dict) -> Path:
+def _mistake_path(entry: dict, dataset: str) -> Path:
     if entry.get("removed"):
-        folder = removed_folder()
+        folder = removed_folder(dataset)
     else:
-        folder = _category_folder(entry.get("movedTo") or entry["actual"])
+        folder = _category_folder(entry.get("movedTo") or entry["actual"], dataset)
     return folder / Path(entry["file"]).name
 
 
 def mistake_image(job_id: str, index: int) -> Path:
     """Finds a mistake's image. It reads the user's own copy, so removing images really removes them."""
-    path = _mistake_path(_mistake(_trained(job_id), index))
+    job = _trained(job_id)
+    path = _mistake_path(_mistake(job, index), job.dataset)
     if not path.is_file():
         raise TrainingError(404, "That image has been removed.")
     return path
@@ -447,19 +463,19 @@ def fix_mistake(job_id: str, index: int, action: str, category: str | None = Non
     with _lock:
         job = _trained(job_id)
         entry = _mistake(job, index)
-        source = _mistake_path(entry)
+        source = _mistake_path(entry, job.dataset)
         if not source.is_file():
             raise TrainingError(404, "That image has been removed.")
         name = source.name
         if action == "move":
             if category not in job.categories:
                 raise TrainingError(422, "Choose one of this model's categories.")
-            target = _category_folder(category)
+            target = _category_folder(category, job.dataset)
             moved_to, removed = (None if category == entry["actual"] else category), False
         elif action == "remove":
-            target, moved_to, removed = removed_folder(), None, True
+            target, moved_to, removed = removed_folder(job.dataset), None, True
         else:
-            target, moved_to, removed = _category_folder(entry["actual"]), None, False
+            target, moved_to, removed = _category_folder(entry["actual"], job.dataset), None, False
         target.mkdir(parents=True, exist_ok=True)
         destination = target / name
         # The same photo can already be in the target category. Undo must not take that copy away.

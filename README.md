@@ -25,28 +25,35 @@ For models that sort images into categories, the Train page takes your images, t
 computer and lets you try the result on a new image. It runs the same generated `train.py` and
 `predict.py` that the download contains. Other models train from the downloaded project.
 
-Images and text labels are stored in `backend/.workspace/`, which git ignores. Nothing is sent anywhere, though a
+Datasets are stored in `backend/.workspace/`, which git ignores. Nothing is sent anywhere, though a
 pretrained model downloads its weights the first time. Only the latest trained model is kept.
 Set `AI_BRICKS_WORKSPACE` to store these files somewhere else.
 
 The Train page also shows which held-back images the model got wrong. Downloads of these models
 include `review.py` for the same list and `serve.py`, a small FastAPI web API for the trained model.
 
-## Find open data
+## The three screens
 
-The Label page can search public labelled datasets on Hugging Face, show each one's licence, match
-its categories to your model's and copy a sample to this computer. Your search words go to Hugging
-Face, but your own data doesn't. Only public, ungated datasets work, and they need a category column
-that the dataset viewer can read. Trained model downloads include `DATA_SOURCES.md`, which credits
-what you imported. Check each dataset's licence yourself before relying on it.
+- **Home** is where you start, with your recent models and datasets.
+- **Data labeller** holds your datasets. Each one has its own categories, images or text, and credits.
+- **Model builder** is the canvas and the Design, Code, Test, Train and Export steps.
 
-## Label your data
+You can start with either one. To train, choose a dataset on the Train step.
 
-The Label page sorts unlabelled images and text with one key press each: number keys choose a
-category, S skips, X removes and Z undoes. Labelled images go straight into the categories that
-training reads. A trained model can suggest labels for the remaining images, starting with the
-ones it's least sure about. Text labels download as `texts.csv`, which goes at `data/texts.csv` in
-a text project. Mistakes on the Train page can also be moved to the right category or removed.
+## Create a dataset
+
+A dataset can be filled in two ways, and they can be mixed:
+
+- **Find open data** searches public labelled datasets on Hugging Face, shows each one's licence, and
+  copies a sample to this computer. Your search words go to Hugging Face, but your own data doesn't.
+  Only public, ungated datasets with a readable category column work. Trained model downloads include
+  `DATA_SOURCES.md`, which credits what the dataset imported. Check each licence yourself.
+- **Labelling by keyboard** sorts your own images and text: number keys choose a category, S skips,
+  X removes and Z undoes. A model trained on the dataset can suggest labels for the remaining images,
+  starting with the ones it's least sure about.
+
+Text labels download as `texts.csv`, which goes at `data/texts.csv` in a text project. Mistakes shown on
+the Train step can be moved to the right category or removed.
 
 ## Saved projects
 
@@ -77,6 +84,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/graph.py` validates a build and works out every shape.
 - `backend/aibricks/codegen.py` and `brick_sources.py` write the PyTorch project.
 - `backend/aibricks/code_parser.py` turns `model.py` back into blocks without running it.
+- `backend/aibricks/datasets.py` stores datasets and their categories.
 - `backend/aibricks/labelling.py` stores unsorted images and text, and makes label suggestions.
 - `backend/aibricks/opendata.py` searches and imports open datasets from Hugging Face.
 - `backend/aibricks/projects.py` stores saved projects as JSON files.

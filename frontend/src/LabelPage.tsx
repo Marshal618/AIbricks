@@ -1,20 +1,20 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import * as api from "./api";
-import { useEditor } from "./context";
 import { FindData } from "./FindData";
-import type { ImageQueue, LabelItem, TextQueue } from "./types";
+import type { DatasetSummary, ImageQueue, LabelItem, TextQueue } from "./types";
 
 interface Props {
-  onDesign: () => void;
-  onTrain: () => void;
-  onExport: () => void;
+  dataset: DatasetSummary;
+  onChanged: () => void;
   onUseCategories: (names: string[]) => void;
+  onBuild: () => void;
 }
 
 const UPLOAD_WORKERS = 4;
 const UNDO_DEPTH = 100;
 const PRELOAD = 3;
 const POLL_MS = 1000;
+const SAVED_REFRESH_MS = 400;
 
 interface Action {
   item: LabelItem;
@@ -27,46 +27,9 @@ interface Adapter {
   remove: (id: string) => Promise<void>;
 }
 
-export function LabelPage({ onDesign, onTrain, onExport, onUseCategories }: Props) {
-  const { analysis, mode } = useEditor();
-  const beginner = mode === "beginner";
-  let body: ReactNode;
-  if (!analysis?.ok) {
-    body = (
-      <div className="notice">
-        <span>Finish the model first, so the app knows which categories to sort into.</span>
-        <button className="button button-small" onClick={onDesign}>Go to Design</button>
-      </div>
-    );
-  } else if (analysis.labelKind === "image") {
-    body = <ImageLabels categories={analysis.labelCategories ?? []} canTrain={Boolean(analysis.categories)} onTrain={onTrain} onUseCategories={onUseCategories} />;
-  } else if (analysis.labelKind === "text") {
-    body = <TextLabels categories={analysis.labelCategories ?? []} onExport={onExport} onUseCategories={onUseCategories} />;
-  } else {
-    body = (
-      <section className="card">
-        <h2>This model doesn't need labels from here</h2>
-        <p className="muted">The labelling tool sorts images and text into categories. This model learns from a different kind of answer, which goes straight into its data file.</p>
-      </section>
-    );
-  }
-  return (
-    <div className="page-scroll">
-      <div className="page-inner page-narrow">
-        <header className="page-head">
-          <div>
-            <h1>Label</h1>
-            <p className="muted">
-              {beginner
-                ? "Find open data, or tell the model what your own examples are, one key press at a time."
-                : "Import open datasets, or assign categories to unlabelled data using the keyboard."}
-            </p>
-          </div>
-        </header>
-        {body}
-      </div>
-    </div>
-  );
+/** Everything for filling one dataset: open data, your own files, and labelling. */
+export function DatasetLabels(props: Props) {
+  return props.dataset.kind === "image" ? <ImageLabels {...props} /> : <TextLabels {...props} />;
 }
 
 function useKeys(handler: (event: KeyboardEvent) => void) {
@@ -88,6 +51,8 @@ interface LabellerProps {
   counts: Record<string, number>;
   adapter: Adapter;
   onChanged: () => void;
+  /** Called shortly after labels save, so the totals elsewhere on the page catch up. */
+  onSaved: () => void;
   onCount: (category: string, change: number) => void;
   render: (item: LabelItem) => ReactNode;
   preload?: (item: LabelItem) => void;
@@ -95,14 +60,20 @@ interface LabellerProps {
 }
 
 /** Shows one item at a time. Labels apply instantly on screen and reach the server in order. */
-function Labeller({ items, setItems, hidden, categories, counts, adapter, onChanged, onCount, render, preload, doneMessage }: LabellerProps) {
+function Labeller({ items, setItems, hidden, categories, counts, adapter, onChanged, onSaved, onCount, render, preload, doneMessage }: LabellerProps) {
   const [history, setHistory] = useState<Action[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
   const requests = useRef<Promise<unknown>>(Promise.resolve());
   const current = items[0];
 
+  const saveTimer = useRef<number>();
+  useEffect(() => () => window.clearTimeout(saveTimer.current), []);
+
   const send = (request: () => Promise<void>, recover: () => void) => {
-    requests.current = requests.current.then(request).catch((error) => {
+    requests.current = requests.current.then(request).then(() => {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(onSaved, SAVED_REFRESH_MS);
+    }).catch((error) => {
       setProblem(error instanceof Error ? error.message : "That change couldn't be saved.");
       recover();
     });
@@ -212,17 +183,15 @@ function Labeller({ items, setItems, hidden, categories, counts, adapter, onChan
   );
 }
 
-const imageAdapter: Adapter = {
-  assign: api.assignImage,
-  unassign: api.unassignImage,
-  remove: api.removeImage,
-};
-
-function preloadImage(item: LabelItem) {
-  new Image().src = api.unsortedImageUrl(item.id);
-}
-
-function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categories: string[]; canTrain: boolean; onTrain: () => void; onUseCategories: (names: string[]) => void }) {
+function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
+  const datasetId = dataset.id;
+  const categories = dataset.categories;
+  const adapter: Adapter = useMemo(() => ({
+    assign: (id, category) => api.assignImage(id, category, datasetId),
+    unassign: (id, category) => api.unassignImage(id, category, datasetId),
+    remove: (id) => api.removeImage(id, datasetId),
+  }), [datasetId]);
+  const preload = useCallback((item: LabelItem) => { new Image().src = api.unsortedImageUrl(item.id, datasetId); }, [datasetId]);
   const [queue, setQueue] = useState<ImageQueue | null>(null);
   const [items, setItems] = useState<LabelItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -234,14 +203,14 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
 
   const load = useCallback(async () => {
     try {
-      const [nextQueue, dataset] = await Promise.all([api.fetchImageQueue(), api.fetchDataset(JSON.parse(categoryKey))]);
+      const [nextQueue, info] = await Promise.all([api.fetchImageQueue(datasetId), api.fetchDataset(JSON.parse(categoryKey), datasetId)]);
       setQueue(nextQueue);
       setItems(nextQueue.items);
-      setCounts(dataset.counts);
+      setCounts(info.counts);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "The images could not load.");
     }
-  }, [categoryKey]);
+  }, [categoryKey, datasetId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -249,11 +218,11 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
   useEffect(() => {
     if (!suggesting) return;
     const timer = window.setInterval(async () => {
-      const next = await api.fetchImageQueue().catch(() => null);
+      const next = await api.fetchImageQueue(datasetId).catch(() => null);
       if (next && !next.suggesting) void load();
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [suggesting, load]);
+  }, [suggesting, load, datasetId]);
 
   const addFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []).filter((file) => !file.name.startsWith("."));
@@ -265,7 +234,7 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
     const worker = async () => {
       for (let file = list.shift(); file; file = list.shift()) {
         try {
-          const reply = await api.addUnsortedImage(file);
+          const reply = await api.addUnsortedImage(file, datasetId);
           if (reply.duplicate) state.duplicates += 1; else state.added += 1;
         } catch (error) {
           state.rejected.push(`${file.name}: ${error instanceof Error ? error.message : "could not be read."}`);
@@ -276,12 +245,13 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
     };
     await Promise.all(Array.from({ length: UPLOAD_WORKERS }, worker));
     await load();
+    onChanged();
   };
 
   const suggest = async () => {
     setProblem(null);
     try {
-      await api.startSuggestions();
+      await api.startSuggestions(datasetId);
       await load();
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "Suggestions could not start.");
@@ -290,8 +260,9 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
 
   const clearAll = async () => {
     if (!window.confirm("Remove all unsorted images from AI Bricks? Your original files aren't touched.")) return;
-    await api.clearUnsortedImages().catch(() => undefined);
+    await api.clearUnsortedImages(datasetId).catch(() => undefined);
     await load();
+    onChanged();
   };
 
   const uploading = upload !== null && upload.done < upload.total;
@@ -303,7 +274,7 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
-      <FindData kind="image" categories={categories} onImported={() => void load()} onUseCategories={onUseCategories} />
+      <FindData datasetId={datasetId} kind="image" categories={categories} onImported={() => { void load(); onChanged(); }} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">
           <h2>Unsorted images</h2>
@@ -349,15 +320,16 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
             ? "The images the model is least sure about come first, because they teach it the most. Check each suggestion, since the model can be wrong."
             : sameCategories
               ? "Your trained model can suggest a label for each image, so you only need to confirm or correct it."
-              : canTrain
-                ? `Label about 20 images per category and train. Your trained model can then suggest the rest, and you only confirm or correct them.${smallest >= 20 ? "" : " It isn't ready yet."}`
-                : "Suggestions need a model that sorts images and can train in this app."}
+              : `Label about 20 images per category, then train a model on this dataset. It can then suggest the rest, and you only confirm or correct them.${smallest >= 20 ? "" : " It isn't ready yet."}`}
         </p>
         {queue?.suggestError && <p className="small tone-bad field-note">{queue.suggestError}</p>}
-        {!sameCategories && canTrain && smallest >= 20 && <button className="button button-small field-note" onClick={onTrain}>Go to Train</button>}
+        {!sameCategories && smallest >= 20 && categories.length > 0 && <button className="button button-small field-note" onClick={onBuild}>Build a model with this data</button>}
       </section>
 
-      {queue && (
+      {queue && categories.length === 0 && (
+        <div className="notice">Add at least one category above, then you can start labelling.</div>
+      )}
+      {queue && categories.length > 0 && (
         <Labeller
           key={categoryKey}
           items={items}
@@ -365,15 +337,16 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
           hidden={queue.total - queue.items.length}
           categories={categories}
           counts={counts}
-          adapter={imageAdapter}
-          onChanged={() => void load()}
+          adapter={adapter}
+          onChanged={() => { void load(); onChanged(); }}
+          onSaved={onChanged}
           onCount={(category, change) => setCounts((current) => ({ ...current, [category]: (current[category] ?? 0) + change }))}
-          preload={preloadImage}
-          render={(item) => <img key={item.id} className="label-image" src={api.unsortedImageUrl(item.id)} alt="The image to label" />}
+          preload={preload}
+          render={(item) => <img key={item.id} className="label-image" src={api.unsortedImageUrl(item.id, datasetId)} alt="The image to label" />}
           doneMessage={
             <div className="label-done">
-              <p className="muted">{queue.total === 0 && !upload ? "Add images above to start labelling." : "All sorted. Your labelled images are ready to train on."}</p>
-              {canTrain && <button className="button button-small" onClick={onTrain}>Go to Train</button>}
+              <p className="muted">{smallest === 0 && queue.total === 0 && !upload ? "Add images above to start labelling." : "All sorted. Your labelled images are ready to train on."}</p>
+              {smallest > 0 && <button className="button button-small" onClick={onBuild}>Build a model with this data</button>}
             </div>
           }
         />
@@ -382,13 +355,14 @@ function ImageLabels({ categories, canTrain, onTrain, onUseCategories }: { categ
   );
 }
 
-const textAdapter: Adapter = {
-  assign: api.assignText,
-  unassign: (id) => api.unassignText(id),
-  remove: api.removeText,
-};
-
-function TextLabels({ categories, onExport, onUseCategories }: { categories: string[]; onExport: () => void; onUseCategories: (names: string[]) => void }) {
+function TextLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
+  const datasetId = dataset.id;
+  const categories = dataset.categories;
+  const adapter: Adapter = useMemo(() => ({
+    assign: (id, category) => api.assignText(id, category, datasetId),
+    unassign: (id) => api.unassignText(id, datasetId),
+    remove: (id) => api.removeText(id, datasetId),
+  }), [datasetId]);
   const [queue, setQueue] = useState<TextQueue | null>(null);
   const [items, setItems] = useState<LabelItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -400,14 +374,14 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
 
   const load = useCallback(async () => {
     try {
-      const next = await api.fetchTextQueue(JSON.parse(categoryKey));
+      const next = await api.fetchTextQueue(JSON.parse(categoryKey), datasetId);
       setQueue(next);
       setItems(next.items);
       setCounts(next.counts);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "The text could not load.");
     }
-  }, [categoryKey]);
+  }, [categoryKey, datasetId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -419,12 +393,13 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
     setMessage(null);
     setBusy(true);
     try {
-      const reply = await api.addUnsortedText(file);
+      const reply = await api.addUnsortedText(file, datasetId);
       const parts = [`Added ${reply.added.toLocaleString()} ${reply.added === 1 ? "text" : "texts"}${reply.column ? ` from the "${reply.column}" column` : ""}.`];
       if (reply.duplicates) parts.push(`${reply.duplicates.toLocaleString()} ${reply.duplicates === 1 ? "was" : "were"} already here.`);
       if (reply.tooLong) parts.push(`${reply.tooLong.toLocaleString()} skipped for being over 5,000 characters.`);
       setMessage(parts.join(" "));
       await load();
+      onChanged();
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "That file could not be read.");
     } finally {
@@ -434,9 +409,10 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
 
   const clearAll = async () => {
     if (!window.confirm("Remove all text and its labels from AI Bricks? Your original files aren't touched.")) return;
-    await api.clearUnsortedText().catch(() => undefined);
+    await api.clearUnsortedText(datasetId).catch(() => undefined);
     setMessage(null);
     await load();
+    onChanged();
   };
 
   const labelled = Object.values(counts).reduce((sum, value) => sum + value, 0);
@@ -444,7 +420,7 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
-      <FindData kind="text" categories={categories} onImported={() => void load()} onUseCategories={onUseCategories} />
+      <FindData datasetId={datasetId} kind="text" categories={categories} onImported={() => { void load(); onChanged(); }} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">
           <h2>Your text</h2>
@@ -458,7 +434,10 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
         {message && <p className="muted small field-note" role="status">{message}</p>}
       </section>
 
-      {queue && (
+      {queue && categories.length === 0 && (
+        <div className="notice">Add at least one category above, then you can start labelling.</div>
+      )}
+      {queue && categories.length > 0 && (
         <Labeller
           key={categoryKey}
           items={items}
@@ -466,8 +445,9 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
           hidden={queue.total - queue.items.length}
           categories={categories}
           counts={counts}
-          adapter={textAdapter}
-          onChanged={() => void load()}
+          adapter={adapter}
+          onChanged={() => { void load(); onChanged(); }}
+          onSaved={onChanged}
           onCount={(category, change) => setCounts((current) => ({ ...current, [category]: (current[category] ?? 0) + change }))}
           render={(item) => <p className="label-text">{item.text}</p>}
           doneMessage={<p className="muted label-done">{queue.total === 0 && labelled === 0 ? "Add a file above to start labelling." : "All sorted. Download your labels below."}</p>}
@@ -478,15 +458,15 @@ function TextLabels({ categories, onExport, onUseCategories }: { categories: str
         <div className="card-head">
           <h2>Use your labels</h2>
           {labelled > 0
-            ? <a className="button button-small" href={api.textExportUrl(categories)} download="texts.csv">Download texts.csv</a>
+            ? <a className="button button-small" href={api.textExportUrl(categories, datasetId)} download="texts.csv">Download texts.csv</a>
             : <button className="button button-small" disabled>Download texts.csv</button>}
         </div>
         <p className="muted small">
           Text models train from the downloaded project. Put this file at <code>data/texts.csv</code> inside that project, then run <code>python train.py</code>.
           Labels save as you go, so you can stop and come back.
         </p>
-        {(queue?.otherLabels ?? 0) > 0 && <p className="muted small field-note">{queue?.otherLabels.toLocaleString()} labelled texts use a category this model doesn't have, so they're left out of the file.</p>}
-        <button className="button button-small field-note" onClick={onExport}>Go to Export</button>
+        {(queue?.otherLabels ?? 0) > 0 && <p className="muted small field-note">{queue?.otherLabels.toLocaleString()} labelled texts use a category this dataset doesn't have now, so they're left out of the file.</p>}
+        <button className="button button-small field-note" onClick={onBuild}>Build a model with this data</button>
       </section>
     </>
   );

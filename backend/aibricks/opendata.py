@@ -174,30 +174,30 @@ def _fetch_image(link: str) -> bytes | None:
         return None
 
 
-def _store_image(link: str, category: str) -> str:
+def _store_image(link: str, category: str, target: str) -> str:
     data = _fetch_image(link)
     if data is None:
         return "failed"
     try:
-        return "duplicate" if training.add_image(category, data)["duplicate"] else "added"
+        return "duplicate" if training.add_image(category, data, target)["duplicate"] else "added"
     except TrainingError as problem:
         return "full" if problem.status == 413 and "full" in problem.message else "failed"
 
 
-def _sources_file():
-    return training.workspace() / "imports.json"
+def _sources_file(target: str):
+    return training.root(target) / "imports.json"
 
 
-def sources() -> list[dict]:
+def sources(target: str = training.DEFAULT_DATASET) -> list[dict]:
     try:
-        return json.loads(_sources_file().read_text(encoding="utf-8"))
+        return json.loads(_sources_file(target).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
 
 
-def sources_markdown() -> str | None:
+def sources_markdown(target: str = training.DEFAULT_DATASET) -> str | None:
     """Credits for imported data, included with a trained model so the licences travel with it."""
-    rows = sources()
+    rows = sources(target)
     if not rows:
         return None
     lines = ["# Data sources", "", "Open datasets imported into AI Bricks, which may have helped train this model.", ""]
@@ -205,21 +205,21 @@ def sources_markdown() -> str | None:
     return "\n".join(lines) + "\n"
 
 
-def _record_source(info: dict, added: int) -> None:
-    rows = [row for row in sources() if row["dataset"] != info["dataset"]]
-    previous = next((row["added"] for row in sources() if row["dataset"] == info["dataset"]), 0)
+def _record_source(info: dict, added: int, target: str) -> None:
+    rows = [row for row in sources(target) if row["dataset"] != info["dataset"]]
+    previous = next((row["added"] for row in sources(target) if row["dataset"] == info["dataset"]), 0)
     rows.append({
         "dataset": info["dataset"], "licence": info["licence"], "added": previous + added,
         "url": f"https://huggingface.co/datasets/{info['dataset']}",
     })
-    path = _sources_file()
+    path = _sources_file(target)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{uuid.uuid4().hex}.partial")
     temporary.write_text(json.dumps(rows), encoding="utf-8")
     os.replace(temporary, path)
 
 
-def _run(job: dict, info: dict, mapping: dict[str, str], per_category: int) -> None:
+def _run(job: dict, info: dict, mapping: dict[str, str], per_category: int, target: str) -> None:
     """Reads pages spread across the dataset, because many datasets store each category together."""
     categories = sorted(set(mapping.values()))
     have = dict.fromkeys(categories, 0)
@@ -264,11 +264,11 @@ def _run(job: dict, info: dict, mapping: dict[str, str], per_category: int) -> N
                 candidates = later
                 if kind == "image":
                     with ThreadPoolExecutor(FETCH_WORKERS) as pool:
-                        outcomes = list(pool.map(lambda pair: _store_image(*pair), wanted))
+                        outcomes = list(pool.map(lambda pair: _store_image(*pair, target), wanted))
                     if "full" in outcomes:
                         raise TrainingError(413, f"The image store is full at {training.MAX_IMAGES:,} images.")
                 else:
-                    outcomes = labelling.import_texts(wanted)
+                    outcomes = labelling.import_texts(wanted, target)
                 for (_, category), outcome in zip(wanted, outcomes):
                     if outcome == "failed":
                         job["skipped"] += 1
@@ -284,10 +284,10 @@ def _run(job: dict, info: dict, mapping: dict[str, str], per_category: int) -> N
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as problem:
         job["status"], job["error"] = "failed", f"The import stopped: {type(problem).__name__}."
     if job["added"]:
-        _record_source(info, job["added"])
+        _record_source(info, job["added"], target)
 
 
-def start_import(dataset: str, kind: str, mapping: dict[str, str], per_category: int) -> dict:
+def start_import(dataset: str, kind: str, mapping: dict[str, str], per_category: int, target: str = training.DEFAULT_DATASET) -> dict:
     global _job
     if not 1 <= per_category <= MAX_PER_CATEGORY:
         raise TrainingError(422, f"Choose between 1 and {MAX_PER_CATEGORY} per category.")
@@ -300,16 +300,16 @@ def start_import(dataset: str, kind: str, mapping: dict[str, str], per_category:
             raise TrainingError(409, "A dataset is already being imported.")
         _cancel.clear()
         _job = {
-            "dataset": dataset, "kind": kind, "licence": info["licence"], "status": "running", "perCategory": per_category,
+            "dataset": dataset, "target": target, "kind": kind, "licence": info["licence"], "status": "running", "perCategory": per_category,
             "counts": dict.fromkeys(sorted(set(mapping.values())), 0), "added": 0, "duplicates": 0, "skipped": 0, "pagesRead": 0, "error": None,
         }
         job = _job
-    threading.Thread(target=_run, args=(job, info, mapping, per_category), daemon=True).start()
+    threading.Thread(target=_run, args=(job, info, mapping, per_category, target), daemon=True).start()
     return job
 
 
-def status() -> dict:
-    return {"job": _job, "sources": sources()}
+def status(target: str = training.DEFAULT_DATASET) -> dict:
+    return {"job": _job if _job and _job["target"] == target else None, "sources": sources(target)}
 
 
 def cancel() -> None:
