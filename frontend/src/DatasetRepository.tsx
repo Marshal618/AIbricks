@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
+import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
 import type { DatasetPreview, DatasetSummary, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
@@ -95,10 +96,11 @@ export function DatasetOverview({ dataset, beginner, onSaved, onLabel }: { datas
 
       <section className="card">
         <h2>Preview</h2>
+        {preview?.table && <PreviewTable table={preview.table} />}
         {!dataset.labelled && (
           <div className="notice">
-            <span>No labelled examples yet.</span>
-            <button className="button button-small" onClick={onLabel}>Add and label data</button>
+            <span>{dataset.kind === "table" ? "No data yet." : "No labelled examples yet."}</span>
+            <button className="button button-small" onClick={onLabel}>{dataset.kind === "table" ? "Upload a CSV file" : "Add and label data"}</button>
           </div>
         )}
         {dataset.labelled > 0 && preview?.categories.map((category) => (
@@ -215,7 +217,7 @@ export function DatasetVersions({ dataset, beginner, onRestored }: { dataset: Da
                   {version.number === data.head && <span className="version-badge">{data.canSave ? "based on this" : "current"}</span>}
                 </span>
                 <span className="muted small">
-                  {when(version.createdAt)} · {amount(version.labelled, "labelled example")}{version.unsorted ? ` · ${version.unsorted.toLocaleString()} unsorted` : ""}
+                  {when(version.createdAt)} · {amount(version.labelled, dataset.kind === "table" ? "row" : "labelled example")}{version.unsorted ? ` · ${version.unsorted.toLocaleString()} unsorted` : ""}
                   {version.changes ? ` · ${describe(version.changes)}` : ""}
                 </span>
               </div>
@@ -243,6 +245,7 @@ export function DatasetVersions({ dataset, beginner, onRestored }: { dataset: Da
 
 function score(model: SavedModel) {
   if (model.status === "running") return "Training";
+  if (model.metrics?.task === "number") return `±${(model.metrics.mae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   if (!model.best || model.best.accuracy === null) return model.status === "failed" ? "Failed" : "No score";
   return `${Math.round(model.best.accuracy * 100)}%`;
 }
@@ -439,6 +442,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     }
   };
   const failed = models?.[0]?.status === "failed" ? models[0] : null;
+  const newestTable = models?.find((model) => model.task === "table" && model.status !== "running" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -456,6 +460,8 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
+      {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
       {newestText && <TryText key={newestText.id} model={newestText} beginner={beginner} />}
       {newestText && <TextMistakes key={`m${newestText.id}`} model={newestText} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       <section className="card">
@@ -471,7 +477,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
             <button className="button button-small" disabled={!dataset.labelled} onClick={onBuild}>Build a model with this data</button>
           </div>
         )}
-        {models?.length === 0 && dataset.kind === "text" && <p className="muted small field-note">No models yet.</p>}
+        {models?.length === 0 && dataset.kind !== "image" && <p className="muted small field-note">No models yet.</p>}
         <ul className="project-list">
           {models?.map((model) => (
             <li key={model.id}>
@@ -481,7 +487,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
                 <span className="muted small">
                   {model.datasetVersion !== null ? `Data v${model.datasetVersion}${known.has(model.datasetVersion) ? "" : " (deleted)"}` : "No data version"}
                   {" · "}{when(model.startedAt)}
-                  {model.best ? ` · guessing would score ${Math.round(model.baseline * 100)}%` : ""}
+                  {model.metrics?.task === "number"
+                    ? ` · typical error; always guessing the average would be off by ${(model.metrics.baselineMae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                    : model.best ? ` · guessing would score ${Math.round((model.metrics?.baseline ?? model.baseline) * 100)}%` : ""}
                   {model.review ? ` · ${model.review.correct} of ${model.review.total} held-back right` : ""}
                   {model.hasModel ? ` · ${megabytes(model.modelBytes)}` : ""}
                   {model.modelRemoved ? " · model file removed to save space" : ""}

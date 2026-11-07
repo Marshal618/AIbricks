@@ -95,7 +95,9 @@ export function Home({ mode, currentProjectId, onNewModel, onContinueModel, onOp
                   <div className="project-text">
                     <strong>{row.name}</strong>
                     <span className="muted small">
-                      {row.kind === "image" ? "Images" : "Text"} · {row.labelled.toLocaleString()} labelled{row.unsorted ? ` · ${row.unsorted.toLocaleString()} unsorted` : ""}
+                      {row.kind === "table"
+                        ? `Spreadsheet · ${row.labelled.toLocaleString()} rows`
+                        : `${row.kind === "image" ? "Images" : "Text"} · ${row.labelled.toLocaleString()} labelled${row.unsorted ? ` · ${row.unsorted.toLocaleString()} unsorted` : ""}`}
                     </span>
                   </div>
                   <button className="button button-small" aria-label={`Open ${row.name}`} onClick={() => onOpenDataset(row.id)}>Open</button>

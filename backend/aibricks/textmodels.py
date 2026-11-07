@@ -280,7 +280,7 @@ def start(dataset: str) -> training.Job:
         if problems:
             raise TrainingError(422, " ".join(problems))
         files = project_files(info["name"], info["categories"])
-        return training.start_text(info["name"], codegen.slug(info["name"]), codegen.build_hash(files), files, info["counts"], dataset, versions.freeze)
+        return training.start_run(info["name"], codegen.slug(info["name"]), codegen.build_hash(files), files, info["counts"], dataset, versions.freeze, "text")
 
 
 def _text_job(job_id: str) -> training.Job:

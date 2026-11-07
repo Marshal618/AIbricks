@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, textmodels, training, versions
+from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, tables, textmodels, training, versions
 
 
 @contextlib.asynccontextmanager
@@ -192,7 +192,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -614,3 +614,51 @@ def try_text_model(job_id: str, request: TextToTry) -> dict:
 @app.get("/api/models/{job_id}/mistakes")
 def text_model_mistakes(job_id: str) -> dict:
     return _dataset_reply(textmodels.mistakes, job_id)
+
+
+# -------------------------------------------------------------- spreadsheet models
+
+class TableTraining(BaseModel):
+    target: str = Field(min_length=1, max_length=500)
+    task: Literal["category", "number"]
+    columns: list[str] = Field(max_length=tables.MAX_COLUMNS)
+
+
+class RowToTry(BaseModel):
+    values: dict[str, str] = Field(max_length=tables.MAX_COLUMNS)
+
+
+@app.post("/api/datasets/{dataset_id}/table")
+async def upload_table(dataset_id: str, request: Request) -> dict:
+    data = await _read_upload(request, tables.MAX_FILE_BYTES)
+    try:
+        return await run_in_threadpool(tables.upload, dataset_id, data)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/datasets/{dataset_id}/table/analysis")
+def analyse_table(
+    dataset_id: str,
+    target: str | None = Query(default=None, max_length=500),
+    task: Literal["category", "number"] | None = None,
+) -> dict:
+    return _dataset_reply(tables.analyse, dataset_id, target, task)
+
+
+@app.post("/api/datasets/{dataset_id}/train-table")
+def train_table_model(dataset_id: str, request: TableTraining) -> dict:
+    try:
+        return {"job": training.public(tables.start(dataset_id, request.target, request.task, request.columns))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/schema")
+def table_model_schema(job_id: str) -> dict:
+    return _dataset_reply(tables.schema, job_id)
+
+
+@app.post("/api/models/{job_id}/try-row")
+def try_table_model(job_id: str, request: RowToTry) -> dict:
+    return _dataset_reply(tables.try_row, job_id, request.values)

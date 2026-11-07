@@ -506,3 +506,29 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
 .version-compare { flex-basis: 100%; padding: 6px 8px; border-radius: var(--radius); background: var(--surface-2); font-size: 12px; }
 .model-score { font-variant-numeric: tabular-nums; font-weight: 600; }
 .text-relabel select { padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; max-width: 160px; }
+
+/* Spreadsheet models */
+.table-scroll { overflow-x: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); }
+.table-scroll table { min-width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.table-scroll th, .table-scroll td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.table-scroll th { background: var(--surface-2); font-weight: 600; }
+.table-scroll tr:last-child td { border-bottom: 0; }
+.table-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.table-choices label, .table-try label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12px; font-weight: 500; }
+.table-choices select, .table-try input, .table-try select { width: 100%; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+.table-columns { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
+.table-columns li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.table-columns li:last-child { border-bottom: 0; }
+.table-columns label { display: flex; align-items: flex-start; gap: 8px; }
+.table-columns input { margin-top: 2px; flex-shrink: 0; }
+.table-column-text { display: flex; flex-direction: column; min-width: 0; }
+.table-column-warning { color: var(--ink); font-size: 12px; }
+.table-column-warning::before { content: "⚠ "; }
+.table-try { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.table-answer { margin-top: 10px; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.importance { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.importance li { display: grid; grid-template-columns: minmax(0, 160px) minmax(0, 1fr) 44px; align-items: center; gap: 10px; font-size: 12px; }
+.importance-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.importance-track { height: 8px; }
+.importance-track span { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--chart); }
+.importance-value { text-align: right; font-variant-numeric: tabular-nums; }

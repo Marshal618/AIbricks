@@ -40,6 +40,14 @@ include `review.py` for the same list and `serve.py`, a small FastAPI web API fo
 
 You can start with either one. To train, choose a dataset on the Train step.
 
+## Predict from a spreadsheet
+
+Create a dataset with the type **Spreadsheet (CSV)** and upload a file on its **Data** tab. On the **Models** tab, choose the column to predict, then train. It predicts a category or a number using gradient-boosted trees from scikit-learn.
+
+Columns likely to make a score misleading are left out by default, with the reason shown: row numbers, IDs, free text, dates and columns that nearly give away the answer. You can turn most of them back on. Exact repeated rows are removed before the split, so the same row can't appear on both sides of it. Check any very high score yourself, as these checks can't catch everything. If your rows are ordered in time, a random hold-back can also make a forecast look better than it will be.
+
+Uploading a new file replaces the table, and any unsaved data is saved as a version first. Files can be up to 50 MB and 200,000 rows.
+
 ## Dataset pages, versions and models
 
 Each dataset has four tabs:

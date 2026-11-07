@@ -201,6 +201,7 @@ class Job:
     task: str = "image"
     stepsDone: int = 0
     stepsTotal: int = 0
+    metrics: dict | None = None
 
 
 def _folder(job: Job) -> Path:
@@ -208,7 +209,7 @@ def _folder(job: Job) -> Path:
 
 
 def _model_path(job: Job) -> Path:
-    return _folder(job) / ("model" if job.task == "text" else "model.pt")
+    return _folder(job) / ("model.pt" if job.task == "image" else "model")
 
 
 def _model_bytes(job: Job) -> int:
@@ -421,6 +422,17 @@ def _review_text(job: Job) -> None:
     _summarise_review(job, rows)
 
 
+def _review_table(job: Job) -> None:
+    """Keeps train.py's scores and column importance, which hold no rows of data."""
+    metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
+    job.metrics = metrics
+    if metrics["task"] == "category":
+        job.review = {
+            "total": metrics["total"], "correct": metrics["correct"], "categories": metrics["perClass"],
+            "mistakeCount": metrics["total"] - metrics["correct"], "mistakes": [],
+        }
+
+
 def _summarise_review(job: Job, rows: list[dict]) -> None:
     categories: dict[str, dict[str, int]] = {name: {"correct": 0, "total": 0} for name in job.categories}
     for row in rows:
@@ -458,7 +470,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            _review_text(job) if job.task == "text" else _review(job)
+            {"text": _review_text, "table": _review_table}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -513,15 +525,15 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
         return _launch(job, folder)
 
 
-def start_text(project_name: str, slug: str, build_hash: str, files: dict[str, str], amounts: dict[str, int], dataset: str, freeze) -> Job:
-    """Starts a text run on a frozen copy of a dataset's labelled text."""
+def start_run(project_name: str, slug: str, build_hash: str, files: dict[str, str], amounts: dict[str, int], dataset: str, freeze, task: str, baseline: float | None = None) -> Job:
+    """Starts a text or spreadsheet run on a frozen copy of a dataset."""
     with _lock:
         if current() is not None and _job.status == "running":
             raise TrainingError(409, "A model is already training. Stop it first.")
         job = Job(
             id=uuid.uuid4().hex[:12], projectName=project_name, slug=slug, buildHash=build_hash,
-            categories=amounts, baseline=max(amounts.values()) / sum(amounts.values()),
-            files=sorted(files), totalEpochs=1, startedAt=time.time(), dataset=dataset, task="text",
+            categories=amounts, baseline=max(amounts.values()) / sum(amounts.values()) if baseline is None else baseline,
+            files=sorted(files), totalEpochs=1, startedAt=time.time(), dataset=dataset, task=task,
         )
         folder = _folder(job)
         (folder / "data").mkdir(parents=True)
@@ -551,7 +563,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text"):
+    for task in ("image", "text", "table"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -665,7 +677,7 @@ def predict(job_id: str, data: bytes) -> list[dict]:
     extension = read_image(data)
     job = _trained(job_id)
     if job.task != "image":
-        raise TrainingError(422, "This model sorts text, not images.")
+        raise TrainingError(422, "This model doesn't read images.")
     folder = _folder(job)
     picture = folder / f"try-{uuid.uuid4().hex}{extension}"
     picture.write_bytes(data)

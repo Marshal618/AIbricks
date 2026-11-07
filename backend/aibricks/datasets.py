@@ -1,6 +1,7 @@
 """Datasets as saved items. Each has its own categories, images or text, and import credits."""
 from __future__ import annotations
 
+import csv
 import json
 import os
 import shutil
@@ -19,13 +20,17 @@ PREVIEW_SAMPLES = 8
 
 class DatasetIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    kind: str = Field(pattern="^(image|text)$")
+    kind: str = Field(pattern="^(image|text|table)$")
     categories: list[str] = Field(default_factory=list, max_length=MAX_CATEGORIES)
 
 
 class DatasetDetails(BaseModel):
     description: str = Field(max_length=2000)
     licence: str = Field(max_length=60)
+
+
+def table_file(dataset: str):
+    return training.root(dataset) / "table" / "data.csv"
 
 
 def _meta_file(dataset: str):
@@ -77,6 +82,9 @@ def _clean_categories(names: list[str]) -> list[str]:
 
 def _summary(meta: dict) -> dict:
     dataset, names = meta["id"], meta["categories"]
+    if meta["kind"] == "table":
+        amounts, unsorted = {}, 0
+        return {"description": "", "licence": "", "rows": 0, "columns": []} | meta | {"counts": amounts, "labelled": meta.get("rows", 0), "unsorted": unsorted}
     if meta["kind"] == "image":
         amounts, unsorted = training.counts(names, dataset), labelling.queue(dataset)["total"]
     else:
@@ -89,6 +97,8 @@ def create(request: DatasetIn) -> dict:
     name = " ".join(request.name.split())
     if not name:
         raise TrainingError(422, "Give the dataset a name.")
+    if request.kind == "table" and request.categories:
+        raise TrainingError(422, "Spreadsheet datasets use columns, not categories.")
     meta = {
         "id": uuid.uuid4().hex[:12], "name": name, "kind": request.kind,
         "categories": _clean_categories(request.categories), "createdAt": time.time(),
@@ -123,9 +133,21 @@ def update_details(dataset: str, details: DatasetDetails) -> dict:
         return _summary(_write(meta))
 
 
+def _table_preview(dataset: str) -> dict | None:
+    try:
+        with open(table_file(dataset), encoding="utf-8", newline="") as file:
+            reader = csv.reader(file)
+            columns = next(reader)
+            return {"columns": columns, "rows": [row for _, row in zip(range(PREVIEW_SAMPLES), reader)]}
+    except (OSError, StopIteration):
+        return None
+
+
 def preview(dataset: str) -> dict:
     """A few examples from each category, and where imported data came from."""
     meta = _read(dataset)
+    if meta["kind"] == "table":
+        return {"categories": [], "sources": [], "table": _table_preview(dataset)}
     rows = []
     for name in meta["categories"]:
         if meta["kind"] == "image":
@@ -150,6 +172,8 @@ def preview_image(dataset: str, category: str, image_id: str):
 def add_categories(dataset: str, names: list[str]) -> dict:
     with training._lock:
         meta = _read(dataset)
+        if meta["kind"] == "table":
+            raise TrainingError(422, "Spreadsheet datasets use columns, not categories.")
         known = {name.casefold() for name in meta["categories"]}
         fresh = [name for name in _clean_categories(names) if name.casefold() not in known]
         meta["categories"] = _clean_categories(meta["categories"] + fresh)

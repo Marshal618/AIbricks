@@ -7,6 +7,7 @@ they're removed from the dataset, until that version is deleted.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ from .training import TrainingError
 
 MAX_MESSAGE = 120
 CREDITS_FILE = "data_sources.md"
+ROW_LABEL = "Rows"
 Items = list[list]  # [example id, category or None when unsorted]
 
 
@@ -63,8 +65,26 @@ def _texts(dataset: str) -> sqlite3.Connection:
     return connection
 
 
+def _table_copy(dataset: str, number: int) -> Path:
+    return _folder(dataset) / "tables" / f"{number}.csv"
+
+
+def _table_items(dataset: str) -> Items:
+    """Lists a table's rows. The header counts, so renaming a column shows up as a change."""
+    path = datasets.table_file(dataset)
+    if not path.exists():
+        return []
+    csv.field_size_limit(100_000_000)
+    with open(path, encoding="utf-8", newline="") as file:
+        reader = csv.reader(file)
+        header = "\x1f".join(next(reader, []))
+        return [[hashlib.sha256((header + "\x1e" + "\x1f".join(row)).encode()).hexdigest()[:32], ROW_LABEL] for row in reader]
+
+
 def _current_items(dataset: str, meta: dict, extra=()) -> Items:
     """Lists what the dataset holds now. Text keeps its order, because exports follow it."""
+    if meta["kind"] == "table":
+        return _table_items(dataset)
     if meta["kind"] == "text":
         with closing(labelling._database(dataset)) as database:
             return [list(row) for row in database.execute("SELECT id, label FROM items WHERE removed = 0 ORDER BY seq")]
@@ -139,7 +159,10 @@ def _link(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
-def _store(dataset: str, meta: dict, items: Items) -> None:
+def _store(dataset: str, meta: dict, items: Items, number: int) -> None:
+    if meta["kind"] == "table":
+        _link(datasets.table_file(dataset), _table_copy(dataset, number))
+        return
     if meta["kind"] == "text":
         with closing(labelling._database(dataset)) as database:
             rows = database.execute("SELECT id, text FROM items WHERE removed = 0").fetchall()
@@ -155,8 +178,8 @@ def _store(dataset: str, meta: dict, items: Items) -> None:
 
 
 def _save(dataset: str, meta: dict, index: dict, items: Items, message: str, automatic: bool) -> dict:
-    _store(dataset, meta, items)
     number = index["next"]
+    _store(dataset, meta, items, number)
     head = _head(index)
     changes = _difference(_items_of(dataset, head["number"]), items, head["categories"], meta["categories"]) if head else None
     counts = _counts(items)
@@ -166,6 +189,8 @@ def _save(dataset: str, meta: dict, index: dict, items: Items, message: str, aut
         "unsorted": sum(label is None for _, label in items), "changes": changes,
         "sources": opendata.sources(dataset),
     }
+    if meta["kind"] == "table":
+        version["columns"] = meta.get("columns", [])
     _write_json(_folder(dataset) / f"{number}.json", items)
     index = {"next": number + 1, "head": number, "versions": [*index["versions"], version]}
     _write_json(_folder(dataset) / "index.json", index)
@@ -201,6 +226,17 @@ def save(dataset: str, message: str) -> dict:
         return _save(dataset, meta, index, items, " ".join(message.split())[:MAX_MESSAGE], False)
 
 
+def save_before_change(dataset: str, message: str) -> int | None:
+    """Saves any unsaved work as a version, and returns its number if one was needed."""
+    with training._lock:
+        meta = datasets._read(dataset)
+        index = _index(dataset)
+        items, changes = _since_head(dataset, meta, index)
+        if items and (changes is None or _has_changes(changes)):
+            return _save(dataset, meta, index, items, message, True)["number"]
+        return None
+
+
 def compare(dataset: str, number: int) -> dict:
     """What changed between a saved version and the dataset as it is now."""
     with training._lock:
@@ -232,7 +268,10 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
             version = _save(dataset, meta, index, items, "Saved automatically for training", True)
         else:
             version = _head(index)
-        if meta["kind"] == "text":
+        if meta["kind"] == "table":
+            (run / "data").mkdir(parents=True, exist_ok=True)
+            _link(_table_copy(dataset, version["number"]), run / "data" / "table.csv")
+        elif meta["kind"] == "text":
             _freeze_text(dataset, names, items, run)
         else:
             target = run / "data" / "images"
@@ -290,6 +329,17 @@ def _restore_text(dataset: str, items: Items) -> None:
         database.executemany("INSERT INTO items (id, text, label) VALUES (?, ?, ?)", [(item_id, texts[item_id], label) for item_id, label in items])
 
 
+def _restore_table(dataset: str, number: int) -> None:
+    source = _table_copy(dataset, number)
+    if not source.is_file():
+        raise TrainingError(500, "This version is missing its table, so it can't be restored.")
+    target = datasets.table_file(dataset)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f"{uuid.uuid4().hex}.partial")
+    shutil.copy2(source, temporary)
+    os.replace(temporary, target)
+
+
 def restore(dataset: str, number: int) -> dict:
     """Makes the dataset match a version. Unsaved work is saved as a new version first."""
     with training._lock:
@@ -307,6 +357,9 @@ def restore(dataset: str, number: int) -> dict:
             index = _index(dataset)
         if meta["kind"] == "image":
             _restore_images(dataset, current, items)
+        elif meta["kind"] == "table":
+            _restore_table(dataset, number)
+            meta["rows"], meta["columns"] = len(items), version.get("columns", [])
         else:
             _restore_text(dataset, items)
         if version["sources"]:
@@ -332,6 +385,7 @@ def delete(dataset: str, number: int) -> None:
         kept = [version for version in index["versions"] if version["number"] != number]
         _write_json(_folder(dataset) / "index.json", index | {"versions": kept})
         (_folder(dataset) / f"{number}.json").unlink(missing_ok=True)
+        _table_copy(dataset, number).unlink(missing_ok=True)
         used = {item_id for version in kept for item_id, _ in _items_of(dataset, version["number"])}
         if meta["kind"] == "text":
             with closing(_texts(dataset)) as store:

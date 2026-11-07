@@ -82,7 +82,7 @@ export interface Analysis {
 export interface DatasetSummary {
   id: string;
   name: string;
-  kind: "image" | "text";
+  kind: "image" | "text" | "table";
   categories: string[];
   counts: Record<string, number>;
   labelled: number;
@@ -90,6 +90,51 @@ export interface DatasetSummary {
   updatedAt: number;
   description: string;
   licence: string;
+  rows?: number;
+  columns?: string[];
+}
+
+export interface TableColumn {
+  name: string;
+  kind: "number" | "category" | "date" | "empty";
+  missing: number;
+  distinct: number;
+  use: boolean;
+  warning: string | null;
+}
+
+export interface TableAnalysis {
+  target: string;
+  task: "category" | "number";
+  targetKind: string;
+  rows: number;
+  totalRows: number;
+  columns: TableColumn[];
+  classes: Record<string, number> | null;
+  problems: string[];
+  notes: string[];
+  headers: string[];
+}
+
+export interface TableMetrics {
+  task: "category" | "number";
+  repeatedRows: number;
+  warnings: string[];
+  importance: { name: string; share: number }[];
+  total: number;
+  accuracy?: number;
+  baseline?: number;
+  correct?: number;
+  mae?: number;
+  r2?: number;
+  baselineMae?: number;
+}
+
+export interface TableSchema {
+  task: "category" | "number";
+  target: string;
+  features: { name: string; kind: string; choices?: string[] }[];
+  classes: string[] | null;
 }
 
 export interface VersionChanges {
@@ -133,6 +178,7 @@ export interface TextMistake {
 export interface DatasetPreview {
   categories: { name: string; samples: { id: string; text?: string }[] }[];
   sources: OpenDataSource[];
+  table?: { columns: string[]; rows: string[][] } | null;
 }
 
 export interface SavedModel {
@@ -148,7 +194,8 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number } | null;
-  task: "image" | "text";
+  task: "image" | "text" | "table";
+  metrics: TableMetrics | null;
   device: string;
   stage: "training" | "reviewing";
   stepsDone: number;

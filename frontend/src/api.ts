@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, SavedModel, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -91,7 +91,7 @@ export async function clearImages(category: string, dataset: string) {
   if (!response.ok) throw new Error(await errorMessage(response));
 }
 
-export async function fetchTraining(kind?: "image" | "text"): Promise<TrainingJob | null> {
+export async function fetchTraining(kind?: "image" | "text" | "table"): Promise<TrainingJob | null> {
   const response = await fetch(kind ? `/api/train/current?${new URLSearchParams({ kind })}` : "/api/train/current");
   if (!response.ok) throw new Error(await errorMessage(response));
   return (await response.json()).job;
@@ -270,7 +270,7 @@ export async function fetchSavedDataset(id: string): Promise<DatasetSummary> {
   return response.json();
 }
 
-export async function createDataset(name: string, kind: "image" | "text", categories: string[]): Promise<DatasetSummary> {
+export async function createDataset(name: string, kind: DatasetSummary["kind"], categories: string[]): Promise<DatasetSummary> {
   return sendJson("/api/datasets", { name, kind, categories });
 }
 
@@ -335,3 +335,24 @@ export async function tryTextModel(job: string, text: string): Promise<PredictAn
 }
 
 export const fetchTextMistakes = (job: string): Promise<{ mistakes: TextMistake[]; total: number }> => getJson(`/api/models/${job}/mistakes`);
+
+export async function uploadTable(id: string, file: File): Promise<{ dataset: DatasetSummary; damagedRows: number; savedFirst: number | null }> {
+  const response = await sendFile(`/api/datasets/${id}/table`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export function fetchTableAnalysis(id: string, target?: string, task?: "category" | "number"): Promise<TableAnalysis> {
+  const query = new URLSearchParams();
+  if (target) query.set("target", target);
+  if (task) query.set("task", task);
+  return getJson(`/api/datasets/${id}/table/analysis?${query}`);
+}
+
+export async function trainTableModel(id: string, target: string, task: "category" | "number", columns: string[]): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-table`, { target, task, columns });
+}
+
+export const fetchTableSchema = (job: string): Promise<TableSchema> => getJson(`/api/models/${job}/schema`);
+
+export const tryTableModel = (job: string, values: Record<string, string>): Promise<{ value?: number; answers?: PredictAnswer[] }> => sendJson(`/api/models/${job}/try-row`, { values });
