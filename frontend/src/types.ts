@@ -88,6 +88,57 @@ export interface DatasetSummary {
   labelled: number;
   unsorted: number;
   updatedAt: number;
+  description: string;
+  licence: string;
+}
+
+export interface VersionChanges {
+  added: number;
+  removed: number;
+  relabelled: number;
+  categoriesAdded: string[];
+  categoriesRemoved: string[];
+  counts: { name: string; before: number; after: number }[];
+}
+
+export interface DatasetVersion {
+  number: number;
+  message: string;
+  automatic: boolean;
+  createdAt: number;
+  categories: string[];
+  counts: Record<string, number>;
+  labelled: number;
+  unsorted: number;
+  changes: VersionChanges | null;
+  sources: OpenDataSource[];
+}
+
+export interface VersionOverview {
+  versions: DatasetVersion[];
+  head: number | null;
+  unsaved: VersionChanges | null;
+  canSave: boolean;
+}
+
+export interface DatasetPreview {
+  categories: { name: string; samples: { id: string; text?: string }[] }[];
+  sources: OpenDataSource[];
+}
+
+export interface SavedModel {
+  id: string;
+  projectName: string;
+  categories: Record<string, number>;
+  baseline: number;
+  status: TrainingJob["status"];
+  best: TrainingEpoch | null;
+  hasModel: boolean;
+  modelRemoved: boolean;
+  datasetVersion: number | null;
+  modelBytes: number;
+  startedAt: number;
+  review: { total: number; correct: number } | null;
 }
 
 export interface OpenDataResult {
@@ -180,6 +231,7 @@ export interface TrainingJob {
   elapsedSeconds: number;
   stage: "training" | "reviewing";
   dataset: string;
+  datasetVersion: number | null;
   review: TrainingReview | null;
   reviewError: string | null;
 }

@@ -4,6 +4,8 @@ import { useEditor } from "./context";
 import { LossChart } from "./LossChart";
 import type { DatasetInfo, DatasetSummary, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
 
+const MODELS_KEPT = 10;
+
 interface Props {
   graph: GraphPayload;
   onDesign: () => void;
@@ -313,10 +315,11 @@ export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onData
           </div>
         )}
         {tested && !job && <p className="muted small">Training uses this computer, so it may slow other apps. It keeps running if you leave this page.</p>}
-        {tested && job && !running && <p className="muted small">Training again replaces the model below.</p>}
+        {tested && job && !running && <p className="muted small">Training again keeps this model. The newest {MODELS_KEPT} stay on the dataset's Models tab.</p>}
         {job && stale && !running && (
           <div className="notice field-note">These results came from an earlier version of this model or a different dataset. Train again to try the current one.</div>
         )}
+        {job?.datasetVersion != null && <p className="muted small">{running ? "Using" : "Trained on"} version v{job.datasetVersion} of the dataset. Labels you change now won't affect this run.</p>}
         {job && <Progress job={job} beginner={beginner} perEpoch={elapsedPerEpoch} />}
       </section>
 

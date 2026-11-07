@@ -14,12 +14,18 @@ from .graph import NAME_RE
 from .training import TrainingError
 
 MAX_CATEGORIES = 100
+PREVIEW_SAMPLES = 8
 
 
 class DatasetIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     kind: str = Field(pattern="^(image|text)$")
     categories: list[str] = Field(default_factory=list, max_length=MAX_CATEGORIES)
+
+
+class DatasetDetails(BaseModel):
+    description: str = Field(max_length=2000)
+    licence: str = Field(max_length=60)
 
 
 def _meta_file(dataset: str):
@@ -76,7 +82,7 @@ def _summary(meta: dict) -> dict:
     else:
         queue = labelling.text_queue(names, dataset)
         amounts, unsorted = queue["counts"], queue["total"]
-    return meta | {"counts": amounts, "labelled": sum(amounts.values()), "unsorted": unsorted}
+    return {"description": "", "licence": ""} | meta | {"counts": amounts, "labelled": sum(amounts.values()), "unsorted": unsorted}
 
 
 def create(request: DatasetIn) -> dict:
@@ -108,6 +114,37 @@ def rename(dataset: str, name: str) -> dict:
     meta = _read(dataset)
     meta["name"] = " ".join(name.split()) or meta["name"]
     return _summary(_write(meta))
+
+
+def update_details(dataset: str, details: DatasetDetails) -> dict:
+    with training._lock:
+        meta = _read(dataset)
+        meta["description"], meta["licence"] = details.description.strip(), " ".join(details.licence.split())
+        return _summary(_write(meta))
+
+
+def preview(dataset: str) -> dict:
+    """A few examples from each category, and where imported data came from."""
+    meta = _read(dataset)
+    rows = []
+    for name in meta["categories"]:
+        if meta["kind"] == "image":
+            files = sorted(path.name for path in training._images_in(training._category_folder(name, dataset)))
+            samples = [{"id": item} for item in files[:PREVIEW_SAMPLES]]
+        else:
+            samples = labelling.text_samples(name, PREVIEW_SAMPLES, dataset)
+        rows.append({"name": name, "samples": samples})
+    return {"categories": rows, "sources": opendata.sources(dataset)}
+
+
+def preview_image(dataset: str, category: str, image_id: str):
+    meta = _read(dataset)
+    if category not in meta["categories"] or not labelling._IMAGE_ID.match(image_id):
+        raise TrainingError(404, "That image doesn't exist.")
+    path = training._category_folder(category, dataset) / image_id
+    if not path.is_file():
+        raise TrainingError(404, "That image doesn't exist.")
+    return path
 
 
 def add_categories(dataset: str, names: list[str]) -> dict:

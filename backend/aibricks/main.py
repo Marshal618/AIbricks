@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, training
+from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, training, versions
 
 
 @contextlib.asynccontextmanager
@@ -212,7 +212,10 @@ def start_training(graph: graphs.GraphIn, dataset: Scope) -> dict:
         raise HTTPException(409, {"message": "Wait for the model to finish making suggestions."})
     epochs = int(codegen.training_settings(graph)["epochs"])
     try:
-        job = training.start(graph.projectName, codegen.slug(graph.projectName), build_hash, files, names, epochs, dataset)
+        job = training.start(
+            graph.projectName, codegen.slug(graph.projectName), build_hash, files, names, epochs, dataset,
+            None if dataset == training.DEFAULT_DATASET else versions.freeze,
+        )
     except training.TrainingError as error:
         raise _raise(error) from None
     return {"job": training.public(job)}
@@ -260,11 +263,10 @@ def fix_mistake(job_id: str, index: int, fix: MistakeFix) -> dict:
 @app.get("/api/train/{job_id}/download")
 def download_trained(job_id: str) -> FileResponse:
     """Returns the project with its trained model. The user's images are not included."""
-    current = training.current()
     handle, path = tempfile.mkstemp(suffix=".zip")
     os.close(handle)
     try:
-        job = training.bundle(job_id, Path(path), opendata.sources_markdown(current.dataset) if current else None)
+        job = training.bundle(job_id, Path(path), versions.credits(training.stored(job_id)))
     except training.TrainingError as error:
         os.unlink(path)
         raise _raise(error) from None
@@ -519,3 +521,69 @@ def remove_dataset_category(dataset_id: str, name: str = Query(max_length=200)) 
 @app.delete("/api/datasets/{dataset_id}")
 def delete_dataset(dataset_id: str) -> dict:
     return _labelled(datasets.delete, dataset_id)
+
+
+@app.put("/api/datasets/{dataset_id}/details")
+def update_dataset_details(dataset_id: str, request: datasets.DatasetDetails) -> dict:
+    return _dataset_reply(datasets.update_details, dataset_id, request)
+
+
+@app.get("/api/datasets/{dataset_id}/preview")
+def preview_dataset(dataset_id: str) -> dict:
+    return _dataset_reply(datasets.preview, dataset_id)
+
+
+@app.get("/api/datasets/{dataset_id}/preview/{image_id}")
+def preview_dataset_image(dataset_id: str, image_id: str, category: str = Query(max_length=200)) -> FileResponse:
+    try:
+        path = datasets.preview_image(dataset_id, category, image_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
+
+
+# ---------------------------------------------------------------- dataset versions
+
+class VersionIn(BaseModel):
+    message: str = Field(default="", max_length=versions.MAX_MESSAGE)
+
+
+@app.get("/api/datasets/{dataset_id}/versions")
+def list_versions(dataset_id: str) -> dict:
+    return _dataset_reply(versions.overview, dataset_id)
+
+
+@app.post("/api/datasets/{dataset_id}/versions")
+def save_version(dataset_id: str, request: VersionIn) -> dict:
+    return _dataset_reply(versions.save, dataset_id, request.message)
+
+
+@app.get("/api/datasets/{dataset_id}/versions/{number}/compare")
+def compare_version(dataset_id: str, number: int) -> dict:
+    return _dataset_reply(versions.compare, dataset_id, number)
+
+
+@app.post("/api/datasets/{dataset_id}/versions/{number}/restore", dependencies=[Depends(_needs_json)])
+def restore_version(dataset_id: str, number: int) -> dict:
+    return _dataset_reply(versions.restore, dataset_id, number)
+
+
+@app.delete("/api/datasets/{dataset_id}/versions/{number}")
+def delete_version(dataset_id: str, number: int) -> dict:
+    return _labelled(versions.delete, dataset_id, number)
+
+
+# ------------------------------------------------------------- models from a dataset
+
+@app.get("/api/datasets/{dataset_id}/models")
+def list_dataset_models(dataset_id: str) -> dict:
+    try:
+        datasets._read(dataset_id)
+        return {"models": training.saved_models(dataset_id)}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.delete("/api/models/{job_id}")
+def delete_saved_model(job_id: str) -> dict:
+    return _labelled(training.delete_model, job_id)

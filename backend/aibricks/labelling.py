@@ -268,6 +268,12 @@ def text_queue(categories: list[str], dataset: str = training.DEFAULT_DATASET) -
     }
 
 
+def text_samples(category: str, limit: int, dataset: str) -> list[dict]:
+    with closing(_database(dataset)) as database:
+        rows = database.execute("SELECT id, text FROM items WHERE label = ? AND removed = 0 ORDER BY seq LIMIT ?", (category, limit)).fetchall()
+    return [{"id": item_id, "text": text} for item_id, text in rows]
+
+
 def _update_text(dataset: str, item_id: str, statement: str, *values: object) -> None:
     with closing(_database(dataset)) as database, database:
         if database.execute(f"UPDATE items SET {statement} WHERE id = ?", (*values, item_id)).rowcount == 0:

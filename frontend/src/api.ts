@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, DatasetSummary, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, TestEvent, TextQueue, TrainingJob } from "./types";
+import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, SavedModel, TestEvent, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -297,3 +297,31 @@ export async function removeDatasetCategory(id: string, name: string): Promise<D
 }
 
 export const deleteSavedDataset = (id: string) => send(`/api/datasets/${id}`, "DELETE");
+
+async function getJson(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const updateDatasetDetails = (id: string, description: string, licence: string): Promise<DatasetSummary> => putJson(`/api/datasets/${id}/details`, { description, licence });
+
+export const fetchDatasetPreview = (id: string): Promise<DatasetPreview> => getJson(`/api/datasets/${id}/preview`);
+
+export const datasetPreviewImage = (id: string, category: string, image: string) => `/api/datasets/${id}/preview/${image}?${new URLSearchParams({ category })}`;
+
+export const fetchVersions = (id: string): Promise<VersionOverview> => getJson(`/api/datasets/${id}/versions`);
+
+export const saveVersion = (id: string, message: string): Promise<DatasetVersion> => sendJson(`/api/datasets/${id}/versions`, { message });
+
+export const compareVersion = (id: string, version: number): Promise<VersionChanges> => getJson(`/api/datasets/${id}/versions/${version}/compare`);
+
+export const restoreVersion = (id: string, version: number): Promise<{ dataset: DatasetSummary; savedFirst: number | null }> => sendJson(`/api/datasets/${id}/versions/${version}/restore`);
+
+export const deleteVersion = (id: string, version: number) => send(`/api/datasets/${id}/versions/${version}`, "DELETE");
+
+export async function fetchDatasetModels(id: string): Promise<SavedModel[]> {
+  return (await getJson(`/api/datasets/${id}/models`)).models;
+}
+
+export const deleteSavedModel = (job: string) => send(`/api/models/${job}`, "DELETE");

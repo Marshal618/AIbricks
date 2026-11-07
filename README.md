@@ -26,7 +26,7 @@ computer and lets you try the result on a new image. It runs the same generated 
 `predict.py` that the download contains. Other models train from the downloaded project.
 
 Datasets are stored in `backend/.workspace/`, which git ignores. Nothing is sent anywhere, though a
-pretrained model downloads its weights the first time. Only the latest trained model is kept.
+pretrained model downloads its weights the first time. The 10 newest trained models are kept for each workspace, with their scores listed on the dataset they came from.
 Set `AI_BRICKS_WORKSPACE` to store these files somewhere else.
 
 The Train page also shows which held-back images the model got wrong. Downloads of these models
@@ -39,6 +39,19 @@ include `review.py` for the same list and `serve.py`, a small FastAPI web API fo
 - **Model builder** is the canvas and the Design, Code, Test, Train and Export steps.
 
 You can start with either one. To train, choose a dataset on the Train step.
+
+## Dataset pages, versions and models
+
+Each dataset has four tabs:
+
+- **Overview** has its description, licence, data sources and a preview of each category.
+- **Label** is where you add categories and examples.
+- **Versions** saves your data and labels so you can compare or restore them. Restoring saves any unsaved work as a new version first.
+- **Models** lists what was trained on this data, with the data version and score of each, and downloads for the newest 10.
+
+Training saves a version automatically when the data has changed, then trains on a frozen copy of it. Text datasets have versions too, but they train from the export, so they aren't linked to models yet.
+
+Versions share files with the dataset, so they take little extra disk space. Examples removed from a dataset stay in older versions until you delete those versions, which erases them from the app. A trained model can still reflect what it learned from them.
 
 ## Create a dataset
 

@@ -197,7 +197,10 @@ def sources(target: str = training.DEFAULT_DATASET) -> list[dict]:
 
 def sources_markdown(target: str = training.DEFAULT_DATASET) -> str | None:
     """Credits for imported data, included with a trained model so the licences travel with it."""
-    rows = sources(target)
+    return credits_markdown(sources(target))
+
+
+def credits_markdown(rows: list[dict]) -> str | None:
     if not rows:
         return None
     lines = ["# Data sources", "", "Open datasets imported into AI Bricks, which may have helped train this model.", ""]

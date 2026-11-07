@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
 import { DatasetLabels } from "./LabelPage";
+import { DatasetModels, DatasetOverview, DatasetVersions } from "./DatasetRepository";
 import type { DatasetSummary, Mode } from "./types";
+
+type Tab = "overview" | "label" | "versions" | "models";
+const TABS: { id: Tab; name: string }[] = [
+  { id: "overview", name: "Overview" },
+  { id: "label", name: "Label" },
+  { id: "versions", name: "Versions" },
+  { id: "models", name: "Models" },
+];
 
 interface Props {
   mode: Mode;
@@ -111,10 +120,14 @@ function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datas
   const [missing, setMissing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState("");
+  const [tab, setTab] = useState<Tab | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setDataset(await api.fetchSavedDataset(datasetId));
+      const loaded = await api.fetchSavedDataset(datasetId);
+      setDataset(loaded);
+      // A new dataset has nothing to show yet, so it opens where data gets added.
+      setTab((open) => open ?? (loaded.labelled || loaded.unsorted ? "overview" : "label"));
     } catch {
       setMissing(true);
     }
@@ -132,7 +145,7 @@ function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datas
   };
 
   const remove = async () => {
-    if (!dataset || !window.confirm(`Delete "${dataset.name}" and all of its copied images and labels? Your original files aren't touched. This can't be undone.`)) return;
+    if (!dataset || !window.confirm(`Delete "${dataset.name}" and all of its copied images, labels and saved versions? Your original files and trained models aren't touched. This can't be undone.`)) return;
     try {
       await api.deleteSavedDataset(datasetId);
       onBack();
@@ -202,7 +215,17 @@ function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datas
         </header>
         {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
 
-        <section className="card">
+        <nav className="dataset-tabs" aria-label="Dataset sections">
+          {TABS.map((item) => (
+            <button key={item.id} className={tab === item.id ? "is-active" : ""} aria-current={tab === item.id ? "page" : undefined} onClick={() => setTab(item.id)}>{item.name}</button>
+          ))}
+        </nav>
+
+        {tab === "overview" && <DatasetOverview dataset={dataset} beginner={beginner} onSaved={setDataset} onLabel={() => setTab("label")} />}
+        {tab === "versions" && <DatasetVersions dataset={dataset} beginner={beginner} onRestored={setDataset} />}
+        {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} />}
+
+        {tab === "label" && <section className="card">
           <h2>Categories</h2>
           {dataset.categories.length === 0 && <p className="muted small">{beginner ? "Categories are the answers your model will learn to give, like Cat or Dog." : "No categories yet."}</p>}
           <ul className="category-list">
@@ -218,14 +241,14 @@ function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datas
             <input type="text" value={newCategory} placeholder="Add categories, separated by commas" aria-label="Add categories" onChange={(event) => setNewCategory(event.target.value)} />
             <button className="button" type="submit" disabled={!newCategory.trim()}>Add</button>
           </form>
-        </section>
+        </section>}
 
-        <DatasetLabels
+        {tab === "label" && <DatasetLabels
           dataset={dataset}
           onChanged={() => void load()}
           onUseCategories={(names) => void run(() => api.addDatasetCategories(datasetId, names))}
           onBuild={() => onBuild(dataset)}
-        />
+        />}
       </div>
     </div>
   );

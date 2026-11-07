@@ -34,6 +34,7 @@ TIME_LIMIT_SECONDS = 6 * 60 * 60
 REVIEW_LIMIT_SECONDS = 30 * 60
 MISTAKES_KEPT = 500
 PREDICT_LIMIT_SECONDS = 120
+MODELS_KEPT = 10
 
 _FORMATS = {"JPEG": ".jpg", "MPO": ".jpg", "PNG": ".png", "BMP": ".bmp", "WEBP": ".webp"}
 _EXTENSIONS = set(_FORMATS.values())
@@ -44,6 +45,7 @@ _EPOCH_LINE = re.compile(
 
 DEFAULT_DATASET = "default"
 _DATASET_ID = re.compile(r"^[0-9a-f]{12}$")
+_RUN_ID = re.compile(r"^[0-9a-f]{12}$")
 _lock = threading.RLock()
 _job: "Job | None" = None
 _process: subprocess.Popen | None = None
@@ -193,6 +195,8 @@ class Job:
     review: dict | None = None
     reviewError: str | None = None
     dataset: str = DEFAULT_DATASET
+    datasetVersion: int | None = None
+    modelRemoved: bool = False
 
 
 def _folder(job: Job) -> Path:
@@ -213,19 +217,34 @@ def _save(job: Job) -> None:
     os.replace(temporary, _folder(job) / "job.json")
 
 
-def _load_latest() -> Job | None:
-    found = sorted((workspace() / "runs").glob("*/job.json"), key=lambda path: path.stat().st_mtime)
-    if not found:
-        return None
+def _read_job(folder: Path) -> Job | None:
+    """Reads a saved run. A run still marked as running stopped when the server did."""
     try:
-        job = Job(**json.loads(found[-1].read_text(encoding="utf-8")))
+        job = Job(**json.loads((folder / "job.json").read_text(encoding="utf-8")))
     except (OSError, ValueError, TypeError):
         return None
-    if job.status == "running":  # The server stopped while this was training.
+    if job.status == "running":
         job.status = "stopped"
-        job.finishedAt = found[-1].stat().st_mtime
-        job.hasModel = job.best is not None and (_folder(job) / "model.pt").exists()
+        job.finishedAt = (folder / "job.json").stat().st_mtime
+        job.hasModel = job.best is not None and (folder / "model.pt").exists()
+        shutil.rmtree(folder / "data", ignore_errors=True)
     return job
+
+
+def _saved_jobs() -> list[Job]:
+    """Every saved run, newest first."""
+    live = _job
+    jobs = []
+    for folder in (workspace() / "runs").glob("*"):
+        job = live if live is not None and live.id == folder.name else _read_job(folder)
+        if job is not None:
+            jobs.append(job)
+    return sorted(jobs, key=lambda job: job.startedAt, reverse=True)
+
+
+def _load_latest() -> Job | None:
+    jobs = _saved_jobs()
+    return jobs[0] if jobs else None
 
 
 def current() -> Job | None:
@@ -243,6 +262,53 @@ def public(job: Job | None) -> dict | None:
     data["elapsedSeconds"] = (job.finishedAt or time.time()) - job.startedAt
     del data["files"], data["slug"], data["stopRequested"]
     return data
+
+
+def saved_models(dataset: str) -> list[dict]:
+    """The runs trained from a dataset, newest first, without their per-epoch detail."""
+    with _lock:
+        current()
+        rows = []
+        for job in _saved_jobs():
+            if job.dataset != dataset:
+                continue
+            row = public(job)
+            del row["epochs"]
+            if row["review"]:
+                row["review"] = {key: row["review"][key] for key in ("total", "correct", "categories")}
+            model = _folder(job) / "model.pt"
+            row["modelBytes"] = model.stat().st_size if job.hasModel and model.exists() else 0
+            rows.append(row)
+        return rows
+
+
+def delete_model(job_id: str) -> None:
+    global _job
+    with _lock:
+        job = stored(job_id)
+        if job.status == "running":
+            raise TrainingError(409, "Stop this model's training first.")
+        shutil.rmtree(_folder(job), ignore_errors=True)
+        if _job is not None and _job.id == job.id:
+            _job = None
+
+
+def _tidy_runs(keep: Path) -> None:
+    """Drops runs with no model, and the model files beyond the newest few. Their records stay."""
+    with_model = []
+    for folder in (workspace() / "runs").iterdir():
+        if folder == keep:
+            continue
+        job = _read_job(folder)
+        if job is None or not (job.hasModel or job.modelRemoved):
+            shutil.rmtree(folder, ignore_errors=True)
+        elif job.hasModel:
+            with_model.append(job)
+    with_model.sort(key=lambda job: job.startedAt, reverse=True)
+    for job in with_model[MODELS_KEPT - 1:]:
+        (_folder(job) / "model.pt").unlink(missing_ok=True)
+        job.hasModel, job.modelRemoved = False, True
+        _save(job)
 
 
 def _environment(folder: Path) -> dict[str, str]:
@@ -363,11 +429,16 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
             job.error = "The loss became invalid, so no model was saved. Try a lower learning rate or a simpler model."
         else:
             job.status = "finished"
+        # The frozen copy of the data is only for this run. Stored results keep no pictures.
+        shutil.rmtree(_folder(job) / "data", ignore_errors=True)
         _save(job)
 
 
-def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], names: list[str], epochs: int, dataset: str = DEFAULT_DATASET) -> Job:
-    """Starts training in the background. Replaces the previous trained model."""
+def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], names: list[str], epochs: int, dataset: str = DEFAULT_DATASET, freeze=None) -> Job:
+    """Starts training in the background. Earlier models are kept, up to MODELS_KEPT.
+
+    freeze(dataset, names, folder) copies the data for this run and returns its version number.
+    """
     global _job, _process
     with _lock:
         if current() is not None and _job.status == "running":
@@ -387,11 +458,16 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
             (folder / name).write_text(contents, encoding="utf-8")
         images = folder / "data" / "images"
         images.mkdir(parents=True)
-        for name in names:
-            (images / name).symlink_to(_category_folder(name, dataset).resolve(), target_is_directory=True)
-        for old in (workspace() / "runs").iterdir():
-            if old != folder:
-                shutil.rmtree(old, ignore_errors=True)
+        if freeze is None:
+            for name in names:
+                (images / name).symlink_to(_category_folder(name, dataset).resolve(), target_is_directory=True)
+        else:
+            try:
+                job.datasetVersion = freeze(dataset, names, images)
+            except Exception:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise
+        _tidy_runs(folder)
         log = folder / "train.log"
         with open(log, "wb") as errors:
             process = subprocess.Popen(
@@ -407,6 +483,17 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
 def _require(job_id: str) -> Job:
     job = current()
     if job is None or job.id != job_id:
+        raise TrainingError(404, "That training run no longer exists. Train the model again.")
+    return job
+
+
+def stored(job_id: str) -> Job:
+    """Finds any saved run, not only the newest."""
+    live = current()
+    if live is not None and live.id == job_id:
+        return live
+    job = _read_job(workspace() / "runs" / job_id) if _RUN_ID.match(job_id) else None
+    if job is None:
         raise TrainingError(404, "That training run no longer exists. Train the model again.")
     return job
 
@@ -529,7 +616,11 @@ def bundle(job_id: str, target: Path, credits: str | None = None) -> Job:
     """Writes the project and its trained model, without the user's images, to a zip file."""
     import zipfile
 
-    job = _trained(job_id)
+    job = stored(job_id)
+    if job.status == "running":
+        raise TrainingError(409, "This model is still training.")
+    if not job.hasModel:
+        raise TrainingError(409, "This run didn't save a model.")
     folder = _folder(job)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in job.files:

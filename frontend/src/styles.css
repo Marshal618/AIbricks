@@ -483,3 +483,25 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
   .home-actions, .home-lists { grid-template-columns: minmax(0, 1fr); }
   .notice { flex-wrap: wrap; }
 }
+
+/* Dataset page */
+.dataset-tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--line-strong); }
+.dataset-tabs button { padding: 6px 12px; margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--ink-soft); font: inherit; cursor: pointer; }
+.dataset-tabs button:hover { color: var(--ink); }
+.dataset-tabs button.is-active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 600; }
+.dataset-about { display: flex; flex-direction: column; gap: 10px; }
+.dataset-about label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 500; }
+.dataset-about textarea, .dataset-about input, .version-save input { width: 100%; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+.dataset-about textarea { min-height: 72px; resize: vertical; }
+.preview-category { margin-top: 12px; }
+.preview-category h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; }
+.preview-images { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; }
+.preview-images img { display: block; width: 100%; aspect-ratio: 1; border-radius: var(--radius); background: var(--surface-2); object-fit: cover; }
+.preview-text { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.preview-text li { padding: 4px 8px; border-radius: var(--radius); background: var(--surface-2); }
+.version-save { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.version-save input { flex: 1 1 200px; width: auto; }
+.version-tag { display: inline-block; margin-right: 6px; font: 600 12px var(--mono); }
+.version-badge { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-soft); font-size: 11px; font-weight: 400; }
+.version-compare { flex-basis: 100%; padding: 6px 8px; border-radius: var(--radius); background: var(--surface-2); font-size: 12px; }
+.model-score { font-variant-numeric: tabular-nums; font-weight: 600; }
