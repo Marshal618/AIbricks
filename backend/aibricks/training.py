@@ -490,6 +490,17 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
 
 
+def _require_idle(dataset: str) -> None:
+    """Training needs the computer to itself, and a copy of data that isn't changing underneath it."""
+    from . import datasets, health  # imported here, because both import this module
+    if health.is_checking():
+        raise TrainingError(409, "Wait for the label check to finish. Both need this computer's full attention.")
+    if dataset != DEFAULT_DATASET:
+        problem = datasets._busy(dataset)
+        if problem:
+            raise TrainingError(409, problem)
+
+
 def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], names: list[str], epochs: int, dataset: str = DEFAULT_DATASET, freeze=None) -> Job:
     """Starts training in the background. Earlier models are kept, up to MODELS_KEPT.
 
@@ -498,6 +509,7 @@ def start(project_name: str, slug: str, build_hash: str, files: dict[str, str], 
     with _lock:
         if current() is not None and _job.status == "running":
             raise TrainingError(409, "A model is already training. Stop it first.")
+        _require_idle(dataset)
         problems = readiness_problems(names, dataset)
         if problems:
             raise TrainingError(422, " ".join(problems))
@@ -530,6 +542,7 @@ def start_run(project_name: str, slug: str, build_hash: str, files: dict[str, st
     with _lock:
         if current() is not None and _job.status == "running":
             raise TrainingError(409, "A model is already training. Stop it first.")
+        _require_idle(dataset)
         job = Job(
             id=uuid.uuid4().hex[:12], projectName=project_name, slug=slug, buildHash=build_hash,
             categories=amounts, baseline=max(amounts.values()) / sum(amounts.values()) if baseline is None else baseline,

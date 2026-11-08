@@ -140,9 +140,9 @@ def overview(dataset: str) -> dict:
             first, second = current.get(pair["first"]), current.get(pair["second"])
             if first is None or second is None:
                 continue
-            key = f"{pair['first']}|{pair['second']}"
+            key = _pair_key(pair["first"], pair["second"])
             differs = first != second
-            state = "kept" if reviews.get(key) else "open" if differs else "same"
+            state = "kept" if reviews.get(key) or reviews.get(f"{pair['first']}|{pair['second']}") else "open" if differs else "same"
             open_pairs += state == "open"
             row = pair | {"state": state, "firstLabels": sorted(first), "secondLabels": sorted(second)}
             if meta["kind"] == "text":
@@ -263,6 +263,11 @@ def _run(dataset: str, work: Path, snapshot: dict[str, str]) -> None:
 
 # ------------------------------------------------------------------ acting on it
 
+def _pair_key(first: str, second: str) -> str:
+    """The same key whichever way round the pair is given."""
+    return "|".join(sorted((first, second)))
+
+
 def review(dataset: str, action: str, item: str | None, category: str | None, pair: list[str] | None) -> dict:
     meta = datasets._read(dataset)
     if meta["kind"] == "table":
@@ -274,9 +279,11 @@ def review(dataset: str, action: str, item: str | None, category: str | None, pa
         reviews = _read(reviews_file, {})
         current = _current(dataset, meta)
         if action == "keep-pair":
-            if not pair or len(pair) != 2:
-                raise TrainingError(422, "Choose a pair.")
-            reviews[f"{pair[0]}|{pair[1]}"] = True
+            if not pair or len(pair) != 2 or pair[0] == pair[1]:
+                raise TrainingError(422, "Choose two different examples.")
+            if pair[0] not in current or pair[1] not in current:
+                raise TrainingError(404, "One of these examples is no longer in this dataset.")
+            reviews[_pair_key(*pair)] = True
         else:
             if not item or item not in current:
                 raise TrainingError(404, "That example is no longer in this dataset.")

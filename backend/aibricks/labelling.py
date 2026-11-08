@@ -47,9 +47,24 @@ def _inbox_path(image_id: str, dataset: str = training.DEFAULT_DATASET) -> Path:
     return inbox(dataset) / image_id
 
 
+_KIND_NAMES = {"image": "photo", "text": "text", "table": "spreadsheet"}
+
+
+def _require_kind(dataset: str, kind: str) -> None:
+    """Stops images going into a text dataset, text into a spreadsheet, and so on."""
+    if dataset == training.DEFAULT_DATASET:
+        return
+    from . import datasets  # imported here because datasets imports this module
+    actual = datasets._read(dataset)["kind"]
+    if actual != kind:
+        things = {"image": "photos", "text": "text", "table": "spreadsheets"}
+        raise TrainingError(422, f"This is a {_KIND_NAMES.get(actual, actual)} dataset, so it can't hold {things[kind]}.")
+
+
 # ---------------------------------------------------------------------- images
 
 def add_image(data: bytes, dataset: str = training.DEFAULT_DATASET) -> dict:
+    _require_kind(dataset, "image")
     extension = training.read_image(data)
     image_id = hashlib.sha256(data).hexdigest()[:32] + extension
     with training._lock:
@@ -100,8 +115,18 @@ def image_file(image_id: str, dataset: str = training.DEFAULT_DATASET) -> Path:
     return path
 
 
+def _require_category(dataset: str, category: str) -> None:
+    """A label outside the dataset's categories would be stored where nothing can see it."""
+    if dataset == training.DEFAULT_DATASET:
+        return
+    from . import datasets  # imported here because datasets imports this module
+    if category not in datasets._read(dataset)["categories"]:
+        raise TrainingError(422, f'"{category[:40]}" isn\'t one of this dataset\'s categories. Refresh the page to see the current ones.')
+
+
 def assign_image(image_id: str, category: str, dataset: str = training.DEFAULT_DATASET) -> None:
     with training._lock:
+        _require_category(dataset, category)
         source = image_file(image_id, dataset)
         target = training._category_folder(category, dataset)
         target.mkdir(parents=True, exist_ok=True)
@@ -217,6 +242,7 @@ def _read_texts(data: bytes, kind: str) -> tuple[list[str], str | None]:
 
 
 def add_text(data: bytes, kind: str, dataset: str = training.DEFAULT_DATASET) -> dict:
+    _require_kind(dataset, "text")
     texts, column = _read_texts(data, kind)
     added = duplicates = too_long = 0
     with closing(_database(dataset)) as database, database:
@@ -238,6 +264,7 @@ def add_text(data: bytes, kind: str, dataset: str = training.DEFAULT_DATASET) ->
 
 def import_texts(rows: list[tuple[str, str]], dataset: str = training.DEFAULT_DATASET) -> list[str]:
     """Stores texts that already have a label. Returns "added" or "duplicate" for each one."""
+    _require_kind(dataset, "text")
     outcomes = []
     with closing(_database(dataset)) as database, database:
         total = database.execute("SELECT COUNT(*) FROM items").fetchone()[0]
@@ -293,6 +320,7 @@ def _update_text(dataset: str, item_id: str, statement: str, *values: object) ->
 
 
 def assign_text(item_id: str, category: str, dataset: str = training.DEFAULT_DATASET) -> None:
+    _require_category(dataset, category)
     _update_text(dataset, item_id, "label = ?", category)
 
 

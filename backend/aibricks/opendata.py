@@ -294,6 +294,7 @@ def start_import(dataset: str, kind: str, mapping: dict[str, str], per_category:
     global _job
     if not 1 <= per_category <= MAX_PER_CATEGORY:
         raise TrainingError(422, f"Choose between 1 and {MAX_PER_CATEGORY} per category.")
+    labelling._require_kind(target, kind)
     info = _describe(dataset, kind)
     mapping = {label: category for label, category in mapping.items() if label in {str(name) for name in info["labels"]} and category}
     if not mapping:

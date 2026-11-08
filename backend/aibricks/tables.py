@@ -37,9 +37,16 @@ def _is_missing(value: str) -> bool:
     return value.strip().lower() in _MISSING
 
 
+_DECIMAL_COMMA = re.compile(r"^[+-]?(\d{1,3}(\.\d{3})+|\d+)(,\d+)?$")
+
+
 def _number(value: str) -> float | None:
+    # Kept the same as number() in the generated model.py, so training and predicting agree.
+    value = value.strip().replace(",", "")
+    value = value[1:] if value[:1] in "$€£¥" else value
+    value = value[:-1] if value.endswith("%") else value
     try:
-        number = float(value.strip().replace(",", ""))
+        number = float(value)
     except ValueError:
         return None
     return number if math.isfinite(number) else None
@@ -81,7 +88,19 @@ def _parse(data: bytes) -> tuple[list[str], list[list[str]], int]:
         raise TrainingError(422, "This CSV file couldn't be read.") from None
     if not rows:
         raise TrainingError(422, "This file has no rows of data.")
+    if delimiter == ";":
+        _convert_decimal_commas(rows)
     return header, rows, damaged
+
+
+def _convert_decimal_commas(rows: list[list[str]]) -> None:
+    """Semicolon files usually come from places that write 1.234,5 for 1234.5, so those columns are rewritten."""
+    for column in range(len(rows[0])):
+        present = [row[column].strip() for row in rows if not _is_missing(row[column])]
+        if present and any("," in value for value in present) and all(_DECIMAL_COMMA.match(value) for value in present):
+            for row in rows:
+                if not _is_missing(row[column]):
+                    row[column] = row[column].strip().replace(".", "").replace(",", ".")
 
 
 def read_table(dataset: str) -> tuple[list[str], list[list[str]]]:
@@ -233,6 +252,8 @@ def analyse(dataset: str, target: str | None = None, task: str | None = None) ->
             problems.append(f"This column needs at least 2 different values that each appear {MIN_PER_CLASS} times or more.")
     elif target_kind != "number":
         problems.append("This column doesn't hold numbers, so predict it as a category instead.")
+    elif len({_number(row[position]) for row in usable}) < 2:
+        problems.append("Every row has the same value in this column, so there's nothing to predict.")
     left = len(rows) - len(usable)
     if left and not (task == "category" and notes):
         notes.append(f"Left out {left:,} rows with no usable answer.")
@@ -288,8 +309,11 @@ def number(value):
     value = str(value).strip()
     if value.lower() in MISSING:
         return math.nan
+    value = value.replace(",", "")
+    value = value[1:] if value[:1] in "$€£¥" else value
+    value = value[:-1] if value.endswith("%") else value
     try:
-        parsed = float(value.replace(",", ""))
+        parsed = float(value)
     except ValueError:
         return math.nan
     return parsed if math.isfinite(parsed) else math.nan
