@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, projects, runner, tables, textmodels, training, versions
+from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, health, projects, runner, tables, textmodels, training, versions
 
 
 @contextlib.asynccontextmanager
@@ -662,3 +662,27 @@ def table_model_schema(job_id: str) -> dict:
 @app.post("/api/models/{job_id}/try-row")
 def try_table_model(job_id: str, request: RowToTry) -> dict:
     return _dataset_reply(tables.try_row, job_id, request.values)
+
+
+# ------------------------------------------------------------------- data health
+
+class HealthReview(BaseModel):
+    action: Literal["keep", "move", "remove", "drop", "keep-pair"]
+    id: str | None = Field(default=None, max_length=80)
+    category: str | None = Field(default=None, max_length=200)
+    pair: list[str] | None = Field(default=None, max_length=2)
+
+
+@app.get("/api/datasets/{dataset_id}/health")
+def dataset_health(dataset_id: str) -> dict:
+    return _dataset_reply(health.overview, dataset_id)
+
+
+@app.post("/api/datasets/{dataset_id}/health/check", dependencies=[Depends(_needs_json)])
+def start_health_check(dataset_id: str) -> dict:
+    return {"job": _dataset_reply(health.start, dataset_id)}
+
+
+@app.post("/api/datasets/{dataset_id}/health/review")
+def review_health(dataset_id: str, request: HealthReview) -> dict:
+    return _dataset_reply(health.review, dataset_id, request.action, request.id, request.category, request.pair)

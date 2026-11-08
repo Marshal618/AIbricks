@@ -2,15 +2,17 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
 import { DatasetLabels } from "./LabelPage";
 import { DatasetModels, DatasetOverview, DatasetVersions } from "./DatasetRepository";
+import { DataHealthTab } from "./DataHealth";
 import { TableData } from "./TableModels";
 import type { DatasetSummary, Mode } from "./types";
 
 const KIND_NAMES: Record<DatasetSummary["kind"], string> = { image: "Images", text: "Text", table: "Spreadsheet (CSV)" };
 
-type Tab = "overview" | "label" | "versions" | "models";
+type Tab = "overview" | "label" | "health" | "versions" | "models";
 const TABS: { id: Tab; name: string }[] = [
   { id: "overview", name: "Overview" },
   { id: "label", name: "Label" },
+  { id: "health", name: "Health" },
   { id: "versions", name: "Versions" },
   { id: "models", name: "Models" },
 ];
@@ -231,6 +233,7 @@ function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datas
         </nav>
 
         {tab === "overview" && <DatasetOverview dataset={dataset} beginner={beginner} onSaved={setDataset} onLabel={() => setTab("label")} />}
+        {tab === "health" && <DataHealthTab dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
         {tab === "versions" && <DatasetVersions dataset={dataset} beginner={beginner} onRestored={setDataset} />}
         {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} onChanged={() => void load()} />}
 

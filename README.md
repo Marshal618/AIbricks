@@ -48,6 +48,19 @@ Columns likely to make a score misleading are left out by default, with the reas
 
 Uploading a new file replaces the table, and any unsaved data is saved as a version first. Files can be up to 50 MB and 200,000 rows.
 
+## Data health and levels
+
+The **Health** tab gives image and text datasets a level:
+
+1. **Started**: at least 2 categories, with enough examples to train.
+2. **Solid**: 20 or more examples in each category, no category more than 10 times the size of another, and no example filed under two categories.
+3. **Checked**: the label check has run on the current data, and no more than 5% of labels are still flagged.
+4. **Reviewed**: every flagged label and near-duplicate pair with different labels has been reviewed.
+
+The label check scores each example with a model that never saw it, using a pretrained image or text model with a simple classifier trained on the rest of the data. Following the confident learning method, it flags examples the model is confidently sure belong to a different category. You can move, keep or remove each one, and nothing changes without your say. It also finds near-duplicates.
+
+The percentage shown is the share of labels that passed the check, not a measure of how many are truly right. In tests where we deliberately mislabelled real data, it caught 65–80% of the mistakes in news headlines and 74–82% in cat and dog photos. About 55–62% of its flags on headlines were real mistakes, and 93–100% on the photos. Published research on public datasets found about half of such flags were real errors. Spreadsheet datasets show table statistics instead, such as repeated rows and blank cells.
+
 ## Dataset pages, versions and models
 
 Each dataset has four tabs:

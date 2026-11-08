@@ -188,6 +188,9 @@ def _busy(dataset: str) -> str | None:
         return "Wait for the import into this dataset to finish."
     if labelling.is_suggesting():
         return "Wait for the model to finish making suggestions."
+    from . import health  # Imported here, because health imports this module.
+    if health.is_checking(dataset):
+        return "Wait for the label check on this dataset to finish."
     return None
 
 

@@ -365,3 +365,50 @@ export type TestEvent =
   | { event: "check"; check: string; passed: boolean; detail?: string; first?: number; last?: number }
   | { event: "loss"; step: number; loss: number }
   | { event: "result"; passed: boolean; detail?: string };
+
+export interface HealthIssue {
+  id: string;
+  given: string;
+  suggested: string;
+  confidence: number;
+  givenChance: number;
+  state: "open" | "fixed" | "removed" | "kept";
+  labels: string[];
+  text?: string;
+}
+
+export interface HealthPair {
+  first: string;
+  second: string;
+  firstLabel: string;
+  secondLabel: string;
+  firstLabels: string[];
+  secondLabels: string[];
+  similarity: number;
+  state: "open" | "kept" | "same";
+  firstText?: string | null;
+  secondText?: string | null;
+}
+
+export interface DataHealth {
+  kind: "image" | "text" | "table";
+  level?: number;
+  levelName?: string;
+  levels?: string[];
+  nextSteps?: string[];
+  labelled?: number;
+  counts?: Record<string, number>;
+  conflicts?: { ids: string[]; labels: string[] }[];
+  check?: {
+    ranAt: number;
+    agreement: number | null;
+    issues: HealthIssue[];
+    duplicates: HealthPair[];
+    unchecked: number;
+    openIssues: number;
+    openDuplicates: number;
+    passedShare: number | null;
+  } | null;
+  table?: { rows: number; columns: number; repeatedRows: number; blankShare: number; constantColumns: string[] } | null;
+  job: { status: "running" | "finished" | "failed"; stepsDone: number; stepsTotal: number; error: string | null; count: number } | null;
+}

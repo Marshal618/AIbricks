@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -356,3 +356,12 @@ export async function trainTableModel(id: string, target: string, task: "categor
 export const fetchTableSchema = (job: string): Promise<TableSchema> => getJson(`/api/models/${job}/schema`);
 
 export const tryTableModel = (job: string, values: Record<string, string>): Promise<{ value?: number; answers?: PredictAnswer[] }> => sendJson(`/api/models/${job}/try-row`, { values });
+
+export const fetchHealth = (id: string): Promise<DataHealth> => getJson(`/api/datasets/${id}/health`);
+
+export async function startHealthCheck(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/health/check`);
+}
+
+export const reviewHealth = (id: string, body: { action: "keep" | "move" | "remove" | "drop" | "keep-pair"; id?: string; category?: string; pair?: string[] }): Promise<DataHealth> =>
+  sendJson(`/api/datasets/${id}/health/review`, body);
