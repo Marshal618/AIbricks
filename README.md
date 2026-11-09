@@ -103,7 +103,25 @@ On a photo dataset's **Train** tab, **Find a better model** tries several models
 
 Only the winner is kept, as a normal model. **Open its blocks** opens it in the Model builder, so you can see exactly what it is and change it. With fewer than 10 held-back photos it can't tell real differences from luck, and it says so.
 
-**Vary training photos** is also a setting on the Image folder block. It randomly crops, flips and changes the lighting of training photos, never the held-back ones. Leave it off if left and right matter, as with arrows or writing.
+## Vary training photos
+
+**Vary training photos** on the Image folder block changes each training photo a little every time the model sees it, so it learns the object rather than one exact picture. Once it's on, you choose:
+
+- **Mirror left and right.** Leave it off if left and right matter, as with arrows or writing.
+- **Crop and zoom**, up to a percentage.
+- **Turn**, up to a number of degrees.
+- **Light and colour**, up to a percentage.
+- **Automatic mix**, which adds TrivialAugment (Müller and Hutter, 2021): one random change of a random strength per photo, with no tuning needed.
+
+**Preview with my photos** shows one of your photos and eight versions varied as training will vary them. Photos are varied fresh during training, and only the training photos: the held-back ones never change. AI Bricks doesn't save varied copies into datasets, because copies of a training photo landing among the held-back ones is a known way to make a score look far better than it is. Downloads include the same code.
+
+## Spot what's unusual
+
+When creating a photo dataset, choose **Spot what's unusual** to make a model that learns from normal photos only. It has two categories. **Normal** photos are what it learns from: aim for 30, in all the conditions it will see. **Unusual** is optional: a few photos with problems, used only to check it.
+
+It follows PatchCore (Roth et al., 2022), which reached 99% on the MVTec AD factory-defect benchmark. A pretrained ResNet-18 describes every small patch of each normal photo, and an evenly spread sample of those descriptions is kept as a memory. A new photo is unusual when part of it is far from everything in that memory. The heatmap shows which parts.
+
+The line between normal and unusual comes from the training photos only: each half is scored against a memory of the other half, to see how far unseen normal photos usually are. That keeps the held-back photos for an honest check. **How strict should it be?** moves the line and shows the false alarms and catches on the held-back photos at each position. The webcam, photo checks and downloads follow the line you choose.
 
 ## Training check
 
@@ -187,6 +205,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/projects.py` stores saved projects as JSON files.
 - `backend/aibricks/runner.py` runs the test in a separate, time-limited process.
 - `backend/aibricks/training.py` stores your images and runs training and predictions.
+- `backend/aibricks/anomaly.py` learns what normal looks like, and `augment.py` varies training photos.
 - `backend/aibricks/experiments.py` runs Find a better model, and `checkup.py` makes the training check.
 - `backend/aibricks/sounds.py` stores sound clips and trains the sound sorter.
 - `backend/aibricks/explain.py` makes the heatmaps and word weights that show where a model looked.

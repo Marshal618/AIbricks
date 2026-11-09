@@ -695,8 +695,8 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   }), [bricks, edges, nodes]);
 
   const context = useMemo(
-    () => ({ catalogue, bricks, analysis, mode, openBigBrick, connecting, nextNodeId: nextNode?.id ?? null }),
-    [analysis, bricks, catalogue, connecting, mode, nextNode, openBigBrick],
+    () => ({ catalogue, bricks, analysis, mode, openBigBrick, connecting, nextNodeId: nextNode?.id ?? null, datasetId }),
+    [analysis, bricks, catalogue, connecting, mode, nextNode, openBigBrick, datasetId],
   );
 
   useEffect(() => {

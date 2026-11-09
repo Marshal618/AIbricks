@@ -22,6 +22,8 @@ class DatasetIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     kind: str = Field(pattern="^(image|text|table|sound)$")
     categories: list[str] = Field(default_factory=list, max_length=MAX_CATEGORIES)
+    # Photos only: sort into categories, or learn what normal looks like and spot what's unusual.
+    goal: str = Field(default="sort", pattern="^(sort|unusual)$")
 
 
 class DatasetDetails(BaseModel):
@@ -102,10 +104,15 @@ def create(request: DatasetIn) -> dict:
         raise TrainingError(422, "Give the dataset a name.")
     if request.kind == "table" and request.categories:
         raise TrainingError(422, "Spreadsheet datasets use columns, not categories.")
+    if request.goal == "unusual" and request.kind != "image":
+        raise TrainingError(422, "Spotting what's unusual works with photos.")
+    unusual = request.goal == "unusual"
     meta = {
         "id": uuid.uuid4().hex[:12], "name": name, "kind": request.kind,
-        "categories": _clean_categories(request.categories), "createdAt": time.time(),
+        "categories": ["Normal", "Unusual"] if unusual else _clean_categories(request.categories), "createdAt": time.time(),
     }
+    if unusual:
+        meta["goal"] = "unusual"
     return _summary(_write(meta))
 
 
@@ -176,9 +183,15 @@ def preview_image(dataset: str, category: str, image_id: str):
     return path
 
 
+def _fixed(meta: dict) -> None:
+    if meta.get("goal") == "unusual":
+        raise TrainingError(422, "This dataset always has two categories: Normal and Unusual.")
+
+
 def add_categories(dataset: str, names: list[str]) -> dict:
     with training._lock:
         meta = _read(dataset)
+        _fixed(meta)
         if meta["kind"] == "table":
             raise TrainingError(422, "Spreadsheet datasets use columns, not categories.")
         known = {name.casefold() for name in meta["categories"]}
@@ -207,6 +220,7 @@ def _busy(dataset: str) -> str | None:
 def rename_category(dataset: str, old: str, new: str) -> dict:
     with training._lock:
         meta = _read(dataset)
+        _fixed(meta)
         if old not in meta["categories"]:
             raise TrainingError(404, "That category doesn't exist.")
         new = _clean_name(new)
@@ -233,6 +247,7 @@ def remove_category(dataset: str, name: str) -> dict:
     """
     with training._lock:
         meta = _read(dataset)
+        _fixed(meta)
         if name not in meta["categories"]:
             raise TrainingError(404, "That category doesn't exist.")
         problem = _busy(dataset)

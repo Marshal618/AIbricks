@@ -96,8 +96,8 @@ def start(dataset: str, minutes: int) -> dict:
     if minutes not in BUDGETS:
         raise TrainingError(422, f"Choose {', '.join(map(str, BUDGETS))} minutes.")
     meta = datasets.get(dataset)
-    if meta["kind"] != "image":
-        raise TrainingError(422, "Finding a better model works on photo datasets for now.")
+    if meta["kind"] != "image" or meta.get("goal") == "unusual":
+        raise TrainingError(422, "Finding a better model works on photo datasets that sort into categories, for now.")
     names = [name for name in meta["categories"] if meta["counts"].get(name, 0) >= training.MIN_PER_CATEGORY]
     if len(names) < 2:
         raise TrainingError(422, f"Add at least {training.MIN_PER_CATEGORY} photos to each of 2 categories first.")

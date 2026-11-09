@@ -168,3 +168,35 @@ def test_finished_photo_runs_carry_the_check(workspace):  # noqa: F811
     client.post("/api/train", json=graph)
     job = wait_for_end()
     assert job["status"] == "finished" and job["checkup"] and job["checkup"][0]["title"]
+
+
+# ------------------------------------------------------------------ varying photos
+
+def test_previews_show_varied_versions_of_a_real_photo(workspace):  # noqa: F811
+    import base64
+    import io
+    from PIL import Image
+    dataset = photos(per_category=3)
+    reply = client.post("/api/augment/preview", json={"dataset": dataset, "size": 48, "channels": 3,
+                                                     "params": {"vary_flip": True, "vary_crop": 40, "vary_rotate": 20, "vary_light": 30, "vary_auto": True}})
+    assert reply.status_code == 200, reply.text
+    body = reply.json()
+    assert len(body["varied"]) == 8
+    images = [Image.open(io.BytesIO(base64.b64decode(item.split(",", 1)[1]))) for item in [body["original"], *body["varied"]]]
+    assert all(image.size == (48, 48) for image in images)
+    grey = client.post("/api/augment/preview", json={"dataset": dataset, "size": 32, "channels": 1, "params": {}}).json()
+    assert Image.open(io.BytesIO(base64.b64decode(grey["original"].split(",", 1)[1]))).size == (32, 32)
+    words = client.post("/api/datasets", json={"name": "Words", "kind": "text", "categories": ["A"]}).json()["id"]
+    assert client.post("/api/augment/preview", json={"dataset": words, "size": 32, "channels": 3, "params": {}}).status_code == 422
+    empty = client.post("/api/datasets", json={"name": "Empty", "kind": "image", "categories": ["A"]}).json()["id"]
+    assert "Add some photos" in client.post("/api/augment/preview", json={"dataset": empty, "size": 32, "channels": 3, "params": {}}).json()["detail"]["message"]
+
+
+def test_vary_settings_reach_the_generated_code():
+    graph = experiments.graph_for("Vary", ["Red", "Blue"], ("augment",), 1)
+    graph["nodes"][0]["params"].update(vary_flip=False, vary_rotate=10, vary_auto=True)
+    payload = GraphIn(**graph)
+    data = codegen.generate(payload, analyse(payload))["data.py"]
+    assert "VARY = {'flip': False, 'crop': 30, 'rotate': 10, 'light': 25, 'auto': True}" in data
+    graph["nodes"][0]["params"]["vary_rotate"] = 90
+    assert not analyse(GraphIn(**graph)).ok

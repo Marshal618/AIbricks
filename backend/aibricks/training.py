@@ -468,6 +468,19 @@ def _review_files(job: Job) -> None:
     _summarise_review(job, rows)
 
 
+def _review_anomaly(job: Job) -> None:
+    """Keeps each held-back photo's unusualness, so moving the line later can show what changes."""
+    folder = _folder(job) / "data"
+    rows = json.loads((folder / "review.json").read_text(encoding="utf-8"))
+    job.metrics = json.loads((folder / "metrics.json").read_text(encoding="utf-8")) | {
+        "scores": [{"file": row["file"], "actual": row["actual"], "unusualness": row["unusualness"]} for row in rows],
+    }
+    for row in rows:
+        row["path"] = row.pop("file")
+    _save_held_out(job, "category", [(row["path"], row["actual"], row["guess"]) for row in rows])
+    _summarise_review(job, rows)
+
+
 def _review_table(job: Job) -> None:
     """Keeps train.py's scores and column importance, which hold no rows of data."""
     metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
@@ -518,7 +531,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table, "sound": _review_files}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -626,7 +639,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table", "sound"):
+    for task in ("image", "text", "table", "sound", "anomaly"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -848,6 +861,9 @@ def predict_live(job_id: str, data: bytes, explain_it: bool = False) -> dict:
     """
     read_image(data)
     job = stored(job_id)
+    if job.task == "anomaly":
+        from . import anomaly  # imported here, because anomaly imports this module
+        return ask_live(job, anomaly.LIVE_RUNNER, data, explain_it, "The model couldn't read this image.")
     if job.task != "image":
         raise TrainingError(422, "This model doesn't read images.")
     return ask_live(job, explain.LIVE_RUNNER, data, explain_it, "The model couldn't read this image.")

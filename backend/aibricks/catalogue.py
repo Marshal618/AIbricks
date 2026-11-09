@@ -34,6 +34,8 @@ class Param:
     # names only: how many comma-separated entries are allowed.
     min_items: int = 1
     max_items: int = 64
+    # Shown only while this other on/off setting is on.
+    shown_when: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,8 +95,15 @@ _BRICKS = [
         Param("image_size", "Image size (pixels)", "int", 64, "Every image is resized to this square size.", 16, 512),
         Param("channels", "Colour channels", "choice", 3, "3 for colour, 1 for greyscale.", choices=(1, 3)),
         Param("augment", "Vary training photos", "bool", False,
-              "Randomly crops, flips and changes the light of training photos, so the model learns the object, not one exact picture. "
-              "Held-back photos are never changed. Leave it off if left and right matter, as with arrows or writing."),
+              "Changes each training photo a little every time the model sees it, so it learns the object, not one exact picture. "
+              "Held-back photos are never changed."),
+        Param("vary_flip", "Mirror left and right", "bool", True, "Leave this off if left and right matter, as with arrows or writing.", shown_when="augment"),
+        Param("vary_crop", "Crop and zoom (up to %)", "int", 30, "How much of each photo may be cut away. 0 keeps the whole photo.", 0, 60, shown_when="augment"),
+        Param("vary_rotate", "Turn (up to degrees)", "int", 0, "Useful when things can appear at an angle.", 0, 45, shown_when="augment"),
+        Param("vary_light", "Light and colour (up to %)", "int", 25, "Brighter, darker and more or less colourful, as in different rooms.", 0, 60, shown_when="augment"),
+        Param("vary_auto", "Automatic mix", "bool", False,
+              "Also adds one random change of a random strength to each photo, such as sharpening or a colour shift. "
+              "This is TrivialAugment, which works well without tuning.", shown_when="augment"),
     )),
     Brick("time_series", "Time series", "socket", "CSV table of time-ordered measurements.", output=SERIES, params=(
         Param("columns", "Measurement columns", "names", "value", "Comma-separated column names in your CSV file.", max_items=256),
@@ -378,7 +387,7 @@ WHEN_TO_USE = {
     "detect_anomalies": "Use this to flag anything that looks different from normal.",
     "generate": "Use this to write new text in the style of your training text.",
 }
-BASIC_PARAMS = {"image_size", "channels", "augment", "columns", "sequence_length", "classes", "horizon", "max_length", "steps"}
+BASIC_PARAMS = {"image_size", "channels", "augment", "vary_flip", "vary_crop", "vary_rotate", "vary_light", "vary_auto", "columns", "sequence_length", "classes", "horizon", "max_length", "steps"}
 GOALS = {
     "defect_detector": "Sort photos into categories",
     "energy_forecaster": "Predict future values from past measurements",

@@ -11,6 +11,8 @@ export interface EditorContextValue {
   connecting: { nodeId: string; side: "source" | "target"; types: string[] } | null;
   /** The component whose output the library is currently matching. */
   nextNodeId: string | null;
+  /** The dataset chosen for training, used for previews with the person's own photos. */
+  datasetId: string | null;
 }
 
 export const EditorContext = createContext<EditorContextValue | null>(null);

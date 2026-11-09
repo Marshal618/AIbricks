@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, experiments, system, tables, textmodels, training, versions, webapp
+from . import anomaly, augment, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, experiments, system, tables, textmodels, training, versions, webapp
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table", "sound"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound", "anomaly"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -643,6 +643,47 @@ def list_dataset_models(dataset_id: str) -> dict:
         return {"models": training.saved_models(dataset_id)}
     except training.TrainingError as error:
         raise _raise(error) from None
+
+
+class AugmentPreview(BaseModel):
+    dataset: str = Field(min_length=1, max_length=40)
+    size: int = Field(ge=16, le=512)
+    channels: Literal[1, 3]
+    params: dict[str, bool | int] = Field(max_length=10)
+
+
+@app.post("/api/augment/preview")
+def augment_preview(request: AugmentPreview) -> dict:
+    """One of the dataset's photos, and several versions of it varied as training will vary them."""
+    try:
+        return augment.preview(request.dataset, request.size, request.channels, request.params)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    except (TypeError, ValueError):
+        raise HTTPException(422, {"message": "Those settings aren't valid."}) from None
+
+
+@app.post("/api/datasets/{dataset_id}/train-unusual", dependencies=[Depends(_needs_json)])
+def train_unusual(dataset_id: str) -> dict:
+    """Learns what normal looks like from a “spot what's unusual” dataset's normal photos."""
+    try:
+        return {"job": training.public(anomaly.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+class UnusualLine(BaseModel):
+    factor: float
+
+
+@app.get("/api/models/{job_id}/unusual")
+def unusual_settings(job_id: str) -> dict:
+    return _dataset_reply(anomaly.settings, job_id)
+
+
+@app.put("/api/models/{job_id}/unusual")
+def move_unusual_line(job_id: str, request: UnusualLine) -> dict:
+    return _dataset_reply(anomaly.set_factor, job_id, request.factor)
 
 
 class ExperimentRequest(BaseModel):

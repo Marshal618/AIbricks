@@ -4,6 +4,7 @@ import { DatasetLabels } from "./LabelPage";
 import { DatasetModels, DatasetOverview, DatasetVersions, score } from "./DatasetRepository";
 import { DataHealthTab } from "./DataHealth";
 import { SoundLabels } from "./Sound";
+import { UNUSUAL_MINIMUM, UNUSUAL_SUGGESTED, UnusualGuide } from "./Unusual";
 import { TableData } from "./TableModels";
 import type { DatasetSummary, GraphPayload, Mode, SavedModel } from "./types";
 
@@ -26,6 +27,7 @@ const MINIMUM: Record<DatasetSummary["kind"], number> = { image: 2, text: 4, sou
 
 function enoughData(dataset: DatasetSummary) {
   if (dataset.kind === "table") return dataset.labelled > 0;
+  if (dataset.goal === "unusual") return (dataset.counts.Normal ?? 0) >= UNUSUAL_MINIMUM;
   return dataset.categories.length >= 2 && dataset.categories.every((name) => (dataset.counts[name] ?? 0) >= MINIMUM[dataset.kind]);
 }
 
@@ -42,9 +44,14 @@ function NextStep({ dataset, onTab }: { dataset: DatasetSummary; onTab: (tab: Ta
   if (newest === undefined) return null;
 
   const target = TARGET[dataset.kind];
-  const short = dataset.categories.filter((name) => (dataset.counts[name] ?? 0) < target);
+  // Unusual photos are optional, so only normal ones count towards being ready.
+  const short = dataset.goal === "unusual" ? [] : dataset.categories.filter((name) => (dataset.counts[name] ?? 0) < target);
   let step: number, text: string, button: string, tab: Tab, extra: { label: string; tab: Tab } | null = null, anchor: string | null = null;
-  if (dataset.kind === "table" && !dataset.labelled) {
+  if (dataset.goal === "unusual" && !newest && (dataset.counts.Normal ?? 0) < UNUSUAL_SUGGESTED) {
+    const normal = dataset.counts.Normal ?? 0;
+    [step, text, button, tab] = [1, `Add photos of normal things. Aim for ${UNUSUAL_SUGGESTED}; it has ${normal}.`, "Add data", "label"];
+    if (enoughData(dataset)) extra = { label: "Train anyway", tab: "models" };
+  } else if (dataset.kind === "table" && !dataset.labelled) {
     [step, text, button, tab] = [1, "Upload a CSV file with one row per example.", "Add data", "label"];
   } else if (dataset.kind !== "table" && dataset.categories.length < 2) {
     [step, text, button, tab] = [1, "Name at least 2 categories: the answers your model will choose between.", "Add categories", "label"];
@@ -101,6 +108,7 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
   const [name, setName] = useState("");
   const [kind, setKind] = useState<DatasetSummary["kind"]>("image");
   const [categories, setCategories] = useState("");
+  const [goal, setGoal] = useState<"sort" | "unusual">("sort");
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -114,7 +122,8 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
     event.preventDefault();
     setProblem(null);
     try {
-      onOpen((await api.createDataset(name, kind, kind === "table" ? [] : splitNames(categories))).id);
+      const unusual = kind === "image" && goal === "unusual";
+      onOpen((await api.createDataset(name, kind, kind === "table" || unusual ? [] : splitNames(categories), unusual ? "unusual" : "sort")).id);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "The dataset couldn't be created.");
     }
@@ -150,7 +159,14 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
                 </label>
               ))}
             </fieldset>
-            {kind !== "table" && <label className="field">
+            {kind === "image" && (
+              <fieldset className="dataset-kind">
+                <legend>What should it do?</legend>
+                <label><input type="radio" name="dataset-goal" checked={goal === "sort"} onChange={() => setGoal("sort")} />Sort photos into categories</label>
+                <label><input type="radio" name="dataset-goal" checked={goal === "unusual"} onChange={() => setGoal("unusual")} />Spot what's unusual, learning from normal photos only</label>
+              </fieldset>
+            )}
+            {kind !== "table" && !(kind === "image" && goal === "unusual") && <label className="field">
               <span>Categories (optional)</span>
               <input type="text" value={categories} placeholder={kind === "sound" ? "For example: Clap, Whistle, Background noise" : "For example: Cat, Dog"} onChange={(event) => setCategories(event.target.value)} />
               <span className="muted small">Separate them with commas. You can also add them later, or take them from an open dataset.</span>
@@ -314,8 +330,9 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild, onOpenDes
 
         {tab === "label" && dataset.kind === "table" && <TableData dataset={dataset} beginner={beginner} onChanged={setDataset} onTrain={() => setTab("models")} />}
 
-        {tab === "label" && dataset.kind !== "table" && <h2 className="section-title">Categories</h2>}
-        {tab === "label" && dataset.kind !== "table" && <section className="card">
+        {tab === "label" && dataset.goal === "unusual" && <UnusualGuide dataset={dataset} />}
+        {tab === "label" && dataset.kind !== "table" && dataset.goal !== "unusual" && <h2 className="section-title">Categories</h2>}
+        {tab === "label" && dataset.kind !== "table" && dataset.goal !== "unusual" && <section className="card">
           <h2>{beginner ? "The answers your model will choose between" : "Categories"}</h2>
           {dataset.categories.length === 0 && <p className="muted small">{beginner ? "Categories are the answers your model will learn to give, like Cat or Dog." : "No categories yet."}</p>}
           <ul className="category-list">

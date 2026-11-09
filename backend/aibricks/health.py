@@ -166,6 +166,16 @@ def overview(dataset: str) -> dict:
 
 
 def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, open_pairs) -> tuple[int, list[str]]:
+    if meta.get("goal") == "unusual":
+        # Only normal photos are learned from, so they're what needs to be plentiful.
+        normal = counts.get("Normal", 0)
+        if normal < 10:
+            return 0, [f"Add at least 10 normal photos. It has {normal}."]
+        if normal < SOLID_PER_CATEGORY:
+            return 1, [f"Add normal photos until there are {SOLID_PER_CATEGORY}, taken in the different conditions it will see."]
+        if conflicts:
+            return 1, [f"Resolve {len(conflicts)} photo{'s' if len(conflicts) != 1 else ''} filed as both Normal and Unusual."]
+        return 2, ["The label check sorts photos into categories, so it doesn't apply to spotting what's unusual."]
     minimum = training.MIN_PER_CATEGORY if meta["kind"] == "image" else 4
     filled = [amount for amount in counts.values() if amount > 0]
     started = len(counts) >= 2 and min(counts.values(), default=0) >= minimum and labelled >= training.MIN_TOTAL
@@ -201,8 +211,8 @@ def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, op
 def start(dataset: str) -> dict:
     global _job
     meta = datasets._read(dataset)
-    if meta["kind"] in ("table", "sound"):
-        raise TrainingError(422, "The label check is for image and text datasets.")
+    if meta["kind"] in ("table", "sound") or meta.get("goal") == "unusual":
+        raise TrainingError(422, "The label check is for photo and text datasets that sort into categories.")
     with _lock, training._lock:
         if is_checking():
             raise TrainingError(409, "A label check is already running.")

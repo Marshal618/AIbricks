@@ -44,8 +44,12 @@ export function HeatmapKey({ heatmap, beginner }: { heatmap: Heatmap; beginner: 
   return (
     <p className="muted small heatmap-key">
       <span className="heatmap-swatch" aria-hidden="true" />
-      {beginner
+      {beginner && heatmap.method === "patchcore"
+        ? "Bright areas look least like your normal photos. Everything dim matched something it had seen."
+        : beginner
         ? `Bright areas are where it looked most to decide “${heatmap.category}”. Dimmed areas mattered little. This shows where it looked, not proof of why.`
+        : heatmap.method === "patchcore"
+          ? `Patch distance to the nearest remembered normal patch, ${heatmap.width}×${heatmap.height}; full brightness is 1.5× the line.`
         : heatmap.method === "gradcam"
           ? `Grad-CAM for “${heatmap.category}” on the last spatial layer (${heatmap.width}×${heatmap.height}). Shows where, not why.`
           : `Gradient saliency for “${heatmap.category}”, pooled to ${heatmap.width}×${heatmap.height}: this model has no spatial layer near its output.`}
