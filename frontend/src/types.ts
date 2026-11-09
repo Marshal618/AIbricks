@@ -79,6 +79,130 @@ export interface Analysis {
   labelCategories: string[] | null;
 }
 
+export interface DatasetSummary {
+  id: string;
+  name: string;
+  kind: "image" | "text" | "table";
+  categories: string[];
+  counts: Record<string, number>;
+  labelled: number;
+  unsorted: number;
+  updatedAt: number;
+  description: string;
+  licence: string;
+  rows?: number;
+  columns?: string[];
+}
+
+export interface TableColumn {
+  name: string;
+  kind: "number" | "category" | "date" | "empty";
+  missing: number;
+  distinct: number;
+  use: boolean;
+  warning: string | null;
+}
+
+export interface TableAnalysis {
+  target: string;
+  task: "category" | "number";
+  targetKind: string;
+  rows: number;
+  totalRows: number;
+  columns: TableColumn[];
+  classes: Record<string, number> | null;
+  problems: string[];
+  notes: string[];
+  headers: string[];
+}
+
+export interface TableMetrics {
+  task: "category" | "number";
+  repeatedRows: number;
+  warnings: string[];
+  importance: { name: string; share: number }[];
+  total: number;
+  accuracy?: number;
+  baseline?: number;
+  correct?: number;
+  mae?: number;
+  r2?: number;
+  baselineMae?: number;
+}
+
+export interface TableSchema {
+  task: "category" | "number";
+  target: string;
+  features: { name: string; kind: string; choices?: string[] }[];
+  classes: string[] | null;
+}
+
+export interface VersionChanges {
+  added: number;
+  removed: number;
+  relabelled: number;
+  categoriesAdded: string[];
+  categoriesRemoved: string[];
+  counts: { name: string; before: number; after: number }[];
+}
+
+export interface DatasetVersion {
+  number: number;
+  message: string;
+  automatic: boolean;
+  createdAt: number;
+  categories: string[];
+  counts: Record<string, number>;
+  labelled: number;
+  unsorted: number;
+  changes: VersionChanges | null;
+  sources: OpenDataSource[];
+}
+
+export interface VersionOverview {
+  versions: DatasetVersion[];
+  head: number | null;
+  unsaved: VersionChanges | null;
+  canSave: boolean;
+}
+
+export interface TextMistake {
+  id: string;
+  text: string;
+  label: string | null;
+  actual: string;
+  guess: string;
+  chance: number;
+}
+
+export interface DatasetPreview {
+  categories: { name: string; samples: { id: string; text?: string }[] }[];
+  sources: OpenDataSource[];
+  table?: { columns: string[]; rows: string[][] } | null;
+}
+
+export interface SavedModel {
+  id: string;
+  projectName: string;
+  categories: Record<string, number>;
+  baseline: number;
+  status: TrainingJob["status"];
+  best: TrainingEpoch | null;
+  hasModel: boolean;
+  modelRemoved: boolean;
+  datasetVersion: number | null;
+  modelBytes: number;
+  startedAt: number;
+  review: { total: number; correct: number } | null;
+  task: "image" | "text" | "table";
+  metrics: TableMetrics | null;
+  device: string;
+  stage: "training" | "reviewing";
+  stepsDone: number;
+  stepsTotal: number;
+  error: string | null;
+}
+
 export interface OpenDataResult {
   id: string;
   downloads: number;
@@ -168,6 +292,8 @@ export interface TrainingJob {
   error: string | null;
   elapsedSeconds: number;
   stage: "training" | "reviewing";
+  dataset: string;
+  datasetVersion: number | null;
   review: TrainingReview | null;
   reviewError: string | null;
 }
@@ -203,6 +329,7 @@ export interface ProjectData {
   nodes: BrickNodeType[];
   edges: Edge[];
   kitId: string | null;
+  datasetId?: string | null;
 }
 
 export interface PredictAnswer {
@@ -238,3 +365,50 @@ export type TestEvent =
   | { event: "check"; check: string; passed: boolean; detail?: string; first?: number; last?: number }
   | { event: "loss"; step: number; loss: number }
   | { event: "result"; passed: boolean; detail?: string };
+
+export interface HealthIssue {
+  id: string;
+  given: string;
+  suggested: string;
+  confidence: number;
+  givenChance: number;
+  state: "open" | "fixed" | "removed" | "kept";
+  labels: string[];
+  text?: string;
+}
+
+export interface HealthPair {
+  first: string;
+  second: string;
+  firstLabel: string;
+  secondLabel: string;
+  firstLabels: string[];
+  secondLabels: string[];
+  similarity: number;
+  state: "open" | "kept" | "same";
+  firstText?: string | null;
+  secondText?: string | null;
+}
+
+export interface DataHealth {
+  kind: "image" | "text" | "table";
+  level?: number;
+  levelName?: string;
+  levels?: string[];
+  nextSteps?: string[];
+  labelled?: number;
+  counts?: Record<string, number>;
+  conflicts?: { ids: string[]; labels: string[] }[];
+  check?: {
+    ranAt: number;
+    agreement: number | null;
+    issues: HealthIssue[];
+    duplicates: HealthPair[];
+    unchecked: number;
+    openIssues: number;
+    openDuplicates: number;
+    passedShare: number | null;
+  } | null;
+  table?: { rows: number; columns: number; repeatedRows: number; blankShare: number; constantColumns: string[] } | null;
+  job: { status: "running" | "finished" | "failed"; stepsDone: number; stepsTotal: number; error: string | null; count: number } | null;
+}

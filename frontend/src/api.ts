@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, ProjectRow, TestEvent, TextQueue, TrainingJob } from "./types";
+import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -73,32 +73,32 @@ function sendFile(path: string, file: File) {
   return fetch(path, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
 }
 
-export async function fetchDataset(categories: string[]): Promise<DatasetInfo> {
-  const query = new URLSearchParams(categories.map((name) => ["category", name]));
+export async function fetchDataset(categories: string[], dataset: string): Promise<DatasetInfo> {
+  const query = new URLSearchParams([["dataset", dataset], ...categories.map((name) => ["category", name])]);
   const response = await fetch(`/api/dataset?${query}`);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
-export async function uploadImage(category: string, file: File): Promise<{ duplicate: boolean; count: number }> {
-  const response = await sendFile(`/api/dataset/images?${new URLSearchParams({ category })}`, file);
+export async function uploadImage(category: string, file: File, dataset: string): Promise<{ duplicate: boolean; count: number }> {
+  const response = await sendFile(`/api/dataset/images?${new URLSearchParams({ category, dataset })}`, file);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
-export async function clearImages(category: string) {
-  const response = await fetch(`/api/dataset/images?${new URLSearchParams({ category })}`, { method: "DELETE" });
+export async function clearImages(category: string, dataset: string) {
+  const response = await fetch(`/api/dataset/images?${new URLSearchParams({ category, dataset })}`, { method: "DELETE" });
   if (!response.ok) throw new Error(await errorMessage(response));
 }
 
-export async function fetchTraining(): Promise<TrainingJob | null> {
-  const response = await fetch("/api/train/current");
+export async function fetchTraining(kind?: "image" | "text" | "table"): Promise<TrainingJob | null> {
+  const response = await fetch(kind ? `/api/train/current?${new URLSearchParams({ kind })}` : "/api/train/current");
   if (!response.ok) throw new Error(await errorMessage(response));
   return (await response.json()).job;
 }
 
-export async function startTraining(graph: GraphPayload): Promise<TrainingJob> {
-  const response = await post("/api/train", graph);
+export async function startTraining(graph: GraphPayload, dataset: string): Promise<TrainingJob> {
+  const response = await post(`/api/train?${new URLSearchParams({ dataset })}`, graph);
   if (!response.ok) throw new Error(await errorMessage(response));
   return (await response.json()).job;
 }
@@ -168,70 +168,70 @@ export async function fixMistake(id: string, index: number, action: "move" | "re
   return (await sendJson(`/api/train/${id}/mistakes/${index}/fix`, { action, category })).job;
 }
 
-export async function addUnsortedImage(file: File): Promise<{ duplicate: boolean }> {
-  const response = await sendFile("/api/label/images", file);
+export async function addUnsortedImage(file: File, dataset: string): Promise<{ duplicate: boolean }> {
+  const response = await sendFile(`/api/label/images?${new URLSearchParams({ dataset })}`, file);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
-export async function fetchImageQueue(): Promise<ImageQueue> {
-  const response = await fetch("/api/label/images");
+export async function fetchImageQueue(dataset: string): Promise<ImageQueue> {
+  const response = await fetch(`/api/label/images?${new URLSearchParams({ dataset })}`);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
-export function unsortedImageUrl(id: string) {
-  return `/api/label/images/${id}/file`;
+export function unsortedImageUrl(id: string, dataset: string) {
+  return `/api/label/images/${id}/file?${new URLSearchParams({ dataset })}`;
 }
 
-export async function assignImage(id: string, category: string) {
-  await sendJson(`/api/label/images/${id}/assign`, { category });
+export async function assignImage(id: string, category: string, dataset: string) {
+  await sendJson(`/api/label/images/${id}/assign?${new URLSearchParams({ dataset })}`, { category });
 }
 
-export async function unassignImage(id: string, category: string | null) {
-  await sendJson(`/api/label/images/${id}/unassign`, { category });
+export async function unassignImage(id: string, category: string | null, dataset: string) {
+  await sendJson(`/api/label/images/${id}/unassign?${new URLSearchParams({ dataset })}`, { category });
 }
 
-export async function removeImage(id: string) {
-  await sendJson(`/api/label/images/${id}/remove`);
+export async function removeImage(id: string, dataset: string) {
+  await sendJson(`/api/label/images/${id}/remove?${new URLSearchParams({ dataset })}`);
 }
 
-export const clearUnsortedImages = () => send("/api/label/images", "DELETE");
+export const clearUnsortedImages = (dataset: string) => send(`/api/label/images?${new URLSearchParams({ dataset })}`, "DELETE");
 
-export async function startSuggestions() {
-  await sendJson("/api/label/suggest");
+export async function startSuggestions(dataset: string) {
+  await sendJson(`/api/label/suggest?${new URLSearchParams({ dataset })}`);
 }
 
-export async function addUnsortedText(file: File): Promise<{ added: number; duplicates: number; tooLong: number; column: string | null }> {
+export async function addUnsortedText(file: File, dataset: string): Promise<{ added: number; duplicates: number; tooLong: number; column: string | null }> {
   const kind = file.name.toLowerCase().endsWith(".csv") ? "csv" : "lines";
-  const response = await sendFile(`/api/label/text?kind=${kind}`, file);
+  const response = await sendFile(`/api/label/text?${new URLSearchParams({ kind, dataset })}`, file);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
-export async function fetchTextQueue(categories: string[]): Promise<TextQueue> {
-  const query = new URLSearchParams(categories.map((name) => ["category", name]));
+export async function fetchTextQueue(categories: string[], dataset: string): Promise<TextQueue> {
+  const query = new URLSearchParams([["dataset", dataset], ...categories.map((name) => ["category", name])]);
   const response = await fetch(`/api/label/text?${query}`);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
-export async function assignText(id: string, category: string) {
-  await sendJson(`/api/label/text/${id}/assign`, { category });
+export async function assignText(id: string, category: string, dataset: string) {
+  await sendJson(`/api/label/text/${id}/assign?${new URLSearchParams({ dataset })}`, { category });
 }
 
-export async function unassignText(id: string) {
-  await sendJson(`/api/label/text/${id}/unassign`);
+export async function unassignText(id: string, dataset: string) {
+  await sendJson(`/api/label/text/${id}/unassign?${new URLSearchParams({ dataset })}`);
 }
 
-export async function removeText(id: string) {
-  await sendJson(`/api/label/text/${id}/remove`);
+export async function removeText(id: string, dataset: string) {
+  await sendJson(`/api/label/text/${id}/remove?${new URLSearchParams({ dataset })}`);
 }
 
-export const clearUnsortedText = () => send("/api/label/text", "DELETE");
+export const clearUnsortedText = (dataset: string) => send(`/api/label/text?${new URLSearchParams({ dataset })}`, "DELETE");
 
-export function textExportUrl(categories: string[]) {
-  return `/api/label/text/export?${new URLSearchParams(categories.map((name) => ["category", name]))}`;
+export function textExportUrl(categories: string[], dataset: string) {
+  return `/api/label/text/export?${new URLSearchParams([["dataset", dataset], ...categories.map((name) => ["category", name])])}`;
 }
 
 export async function searchOpenData(query: string, kind: "image" | "text"): Promise<OpenDataResult[]> {
@@ -246,14 +246,122 @@ export async function inspectOpenData(dataset: string, kind: "image" | "text"): 
   return response.json();
 }
 
-export async function startOpenDataImport(dataset: string, kind: "image" | "text", mapping: Record<string, string>, perCategory: number): Promise<OpenDataImport> {
-  return (await sendJson("/api/open-data/import", { dataset, kind, mapping, perCategory })).job;
+export async function startOpenDataImport(source: string, kind: "image" | "text", mapping: Record<string, string>, perCategory: number, dataset: string): Promise<OpenDataImport> {
+  return (await sendJson(`/api/open-data/import?${new URLSearchParams({ dataset })}`, { dataset: source, kind, mapping, perCategory })).job;
 }
 
-export async function fetchOpenDataImport(): Promise<{ job: OpenDataImport | null; sources: OpenDataSource[] }> {
-  const response = await fetch("/api/open-data/import");
+export async function fetchOpenDataImport(dataset: string): Promise<{ job: OpenDataImport | null; sources: OpenDataSource[] }> {
+  const response = await fetch(`/api/open-data/import?${new URLSearchParams({ dataset })}`);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
 
 export const cancelOpenDataImport = () => send("/api/open-data/import", "DELETE");
+
+export async function fetchDatasets(): Promise<DatasetSummary[]> {
+  const response = await fetch("/api/datasets");
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return (await response.json()).datasets;
+}
+
+export async function fetchSavedDataset(id: string): Promise<DatasetSummary> {
+  const response = await fetch(`/api/datasets/${id}`);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function createDataset(name: string, kind: DatasetSummary["kind"], categories: string[]): Promise<DatasetSummary> {
+  return sendJson("/api/datasets", { name, kind, categories });
+}
+
+async function putJson(path: string, body: unknown) {
+  const response = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const renameSavedDataset = (id: string, name: string): Promise<DatasetSummary> => putJson(`/api/datasets/${id}/name`, { name });
+
+export const addDatasetCategories = (id: string, names: string[]): Promise<DatasetSummary> => sendJson(`/api/datasets/${id}/categories`, { names });
+
+export const renameDatasetCategory = (id: string, old: string, next: string): Promise<DatasetSummary> => putJson(`/api/datasets/${id}/categories`, { old, new: next });
+
+export async function removeDatasetCategory(id: string, name: string): Promise<DatasetSummary> {
+  const response = await fetch(`/api/datasets/${id}/categories?${new URLSearchParams({ name })}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const deleteSavedDataset = (id: string) => send(`/api/datasets/${id}`, "DELETE");
+
+async function getJson(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const updateDatasetDetails = (id: string, description: string, licence: string): Promise<DatasetSummary> => putJson(`/api/datasets/${id}/details`, { description, licence });
+
+export const fetchDatasetPreview = (id: string): Promise<DatasetPreview> => getJson(`/api/datasets/${id}/preview`);
+
+export const datasetPreviewImage = (id: string, category: string, image: string) => `/api/datasets/${id}/preview/${image}?${new URLSearchParams({ category })}`;
+
+export const fetchVersions = (id: string): Promise<VersionOverview> => getJson(`/api/datasets/${id}/versions`);
+
+export const saveVersion = (id: string, message: string): Promise<DatasetVersion> => sendJson(`/api/datasets/${id}/versions`, { message });
+
+export const compareVersion = (id: string, version: number): Promise<VersionChanges> => getJson(`/api/datasets/${id}/versions/${version}/compare`);
+
+export const restoreVersion = (id: string, version: number): Promise<{ dataset: DatasetSummary; savedFirst: number | null }> => sendJson(`/api/datasets/${id}/versions/${version}/restore`);
+
+export const deleteVersion = (id: string, version: number) => send(`/api/datasets/${id}/versions/${version}`, "DELETE");
+
+export async function fetchDatasetModels(id: string): Promise<SavedModel[]> {
+  return (await getJson(`/api/datasets/${id}/models`)).models;
+}
+
+export const deleteSavedModel = (job: string) => send(`/api/models/${job}`, "DELETE");
+
+export async function trainTextModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-text`);
+}
+
+export async function tryTextModel(job: string, text: string): Promise<PredictAnswer[]> {
+  return (await sendJson(`/api/models/${job}/try`, { text })).answers;
+}
+
+export const fetchTextMistakes = (job: string): Promise<{ mistakes: TextMistake[]; total: number }> => getJson(`/api/models/${job}/mistakes`);
+
+export async function uploadTable(id: string, file: File): Promise<{ dataset: DatasetSummary; damagedRows: number; savedFirst: number | null }> {
+  const response = await sendFile(`/api/datasets/${id}/table`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export function fetchTableAnalysis(id: string, target?: string, task?: "category" | "number"): Promise<TableAnalysis> {
+  const query = new URLSearchParams();
+  if (target) query.set("target", target);
+  if (task) query.set("task", task);
+  return getJson(`/api/datasets/${id}/table/analysis?${query}`);
+}
+
+export async function trainTableModel(id: string, target: string, task: "category" | "number", columns: string[]): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-table`, { target, task, columns });
+}
+
+export const fetchTableSchema = (job: string): Promise<TableSchema> => getJson(`/api/models/${job}/schema`);
+
+export const tryTableModel = (job: string, values: Record<string, string>): Promise<{ value?: number; answers?: PredictAnswer[] }> => sendJson(`/api/models/${job}/try-row`, { values });
+
+export const fetchHealth = (id: string): Promise<DataHealth> => getJson(`/api/datasets/${id}/health`);
+
+export async function startHealthCheck(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/health/check`);
+}
+
+export const reviewHealth = (id: string, body: { action: "keep" | "move" | "remove" | "drop" | "keep-pair"; id?: string; category?: string; pair?: string[] }): Promise<DataHealth> =>
+  sendJson(`/api/datasets/${id}/health/review`, body);

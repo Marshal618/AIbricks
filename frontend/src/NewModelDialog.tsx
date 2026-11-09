@@ -7,9 +7,13 @@ interface Props {
   onKit: (kit: Kit) => void;
   onBlank: () => void;
   onCancel: () => void;
+  /** When building for a dataset, only templates for its kind of data are shown. */
+  forDataset?: { name: string; kind: "image" | "text" | "table" } | null;
 }
 
-export function NewModelDialog({ hasModel, onKit, onBlank, onCancel }: Props) {
+const WRITES_TEXT = new Set(["generate", "transformer_decoder", "decoder_only", "decoder_memory"]);
+
+export function NewModelDialog({ hasModel, onKit, onBlank, onCancel, forDataset }: Props) {
   const { catalogue, mode } = useEditor();
   const beginner = mode === "beginner";
   useEffect(() => {
@@ -18,23 +22,28 @@ export function NewModelDialog({ hasModel, onKit, onBlank, onCancel }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [hasModel, onCancel]);
-  const domains = [...new Set(catalogue.kits.map((kit) => kit.domain))];
+  const socket = forDataset?.kind === "image" ? "image_folder" : "text_input";
+  // A labelled dataset teaches a model to sort, so templates that write text can't use it.
+  const kits = forDataset
+    ? catalogue.kits.filter((kit) => kit.nodes.some((node) => node.type === socket) && !kit.nodes.some((node) => WRITES_TEXT.has(node.type)))
+    : catalogue.kits;
+  const domains = [...new Set(kits.map((kit) => kit.domain))];
   return (
     <div className="dialog-backdrop">
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="new-model-title">
         <header className="dialog-head">
           <div>
             <h1 id="new-model-title">{beginner ? "What do you want to build?" : "New model"}</h1>
-            <p className="muted">{beginner ? "Pick a goal and we'll set up most of it for you." : "Start from a template or a blank canvas."}{hasModel && " Your current model stays in Projects."}</p>
+            <p className="muted">{beginner ? "Pick a goal and we'll set up most of it for you." : "Start from a template or a blank canvas."}{forDataset && ` It will learn from "${forDataset.name}".`}{hasModel && " Your current model stays in Projects."}</p>
           </div>
-          {hasModel && <button className="button button-quiet" onClick={onCancel}>Cancel</button>}
+          {(hasModel || forDataset) && <button className="button button-quiet" onClick={onCancel}>Cancel</button>}
         </header>
         <div className="dialog-body">
           {domains.map((domain) => (
             <section key={domain}>
               <h2 className="pane-title">{domain}</h2>
               <div className="kit-list">
-                {catalogue.kits.filter((kit) => kit.domain === domain).map((kit) => (
+                {kits.filter((kit) => kit.domain === domain).map((kit) => (
                   <button key={kit.id} className="kit-row" onClick={() => onKit(kit)}>
                     <span>
                       <strong>{beginner ? kit.goal : kit.name}</strong>

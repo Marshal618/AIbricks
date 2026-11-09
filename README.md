@@ -25,28 +25,75 @@ For models that sort images into categories, the Train page takes your images, t
 computer and lets you try the result on a new image. It runs the same generated `train.py` and
 `predict.py` that the download contains. Other models train from the downloaded project.
 
-Images and text labels are stored in `backend/.workspace/`, which git ignores. Nothing is sent anywhere, though a
-pretrained model downloads its weights the first time. Only the latest trained model is kept.
+Datasets are stored in `backend/.workspace/`, which git ignores. Nothing is sent anywhere, though a
+pretrained model downloads its weights the first time. The 10 newest trained models are kept for each workspace, with their scores listed on the dataset they came from.
 Set `AI_BRICKS_WORKSPACE` to store these files somewhere else.
 
 The Train page also shows which held-back images the model got wrong. Downloads of these models
 include `review.py` for the same list and `serve.py`, a small FastAPI web API for the trained model.
 
-## Find open data
+## The three screens
 
-The Label page can search public labelled datasets on Hugging Face, show each one's licence, match
-its categories to your model's and copy a sample to this computer. Your search words go to Hugging
-Face, but your own data doesn't. Only public, ungated datasets work, and they need a category column
-that the dataset viewer can read. Trained model downloads include `DATA_SOURCES.md`, which credits
-what you imported. Check each dataset's licence yourself before relying on it.
+- **Home** is where you start, with your recent models and datasets.
+- **Data labeller** holds your datasets. Each one has its own categories, images or text, and credits.
+- **Model builder** is the canvas and the Design, Code, Test, Train and Export steps.
 
-## Label your data
+You can start with either one. To train, choose a dataset on the Train step.
 
-The Label page sorts unlabelled images and text with one key press each: number keys choose a
-category, S skips, X removes and Z undoes. Labelled images go straight into the categories that
-training reads. A trained model can suggest labels for the remaining images, starting with the
-ones it's least sure about. Text labels download as `texts.csv`, which goes at `data/texts.csv` in
-a text project. Mistakes on the Train page can also be moved to the right category or removed.
+## Predict from a spreadsheet
+
+Create a dataset with the type **Spreadsheet (CSV)** and upload a file on its **Data** tab. On the **Models** tab, choose the column to predict, then train. It predicts a category or a number using gradient-boosted trees from scikit-learn.
+
+Columns likely to make a score misleading are left out by default, with the reason shown: row numbers, IDs, free text, dates and columns that nearly give away the answer. You can turn most of them back on. Exact repeated rows are removed before the split, so the same row can't appear on both sides of it. Check any very high score yourself, as these checks can't catch everything. If your rows are ordered in time, a random hold-back can also make a forecast look better than it will be.
+
+Uploading a new file replaces the table, and any unsaved data is saved as a version first. Files can be up to 50 MB and 200,000 rows.
+
+## Data health and levels
+
+The **Health** tab gives image and text datasets a level:
+
+1. **Started**: at least 2 categories, with enough examples to train.
+2. **Solid**: 20 or more examples in each category, no category more than 10 times the size of another, and no example filed under two categories.
+3. **Checked**: the label check has run on the current data, and no more than 5% of labels are still flagged.
+4. **Reviewed**: every flagged label and near-duplicate pair with different labels has been reviewed.
+
+The label check scores each example with a model that never saw it, using a pretrained image or text model with a simple classifier trained on the rest of the data. Following the confident learning method, it flags examples the model is confidently sure belong to a different category. You can move, keep or remove each one, and nothing changes without your say. It also finds near-duplicates.
+
+The percentage shown is the share of labels that passed the check, not a measure of how many are truly right. In tests where we deliberately mislabelled real data, it caught 65–80% of the mistakes in news headlines and 74–82% in cat and dog photos. About 55–62% of its flags on headlines were real mistakes, and 93–100% on the photos. Published research on public datasets found about half of such flags were real errors. Spreadsheet datasets show table statistics instead, such as repeated rows and blank cells.
+
+## Dataset pages, versions and models
+
+Each dataset has four tabs:
+
+- **Overview** has its description, licence, data sources and a preview of each category.
+- **Label** is where you add categories and examples.
+- **Versions** saves your data and labels so you can compare or restore them. Restoring saves any unsaved work as a new version first.
+- **Models** lists what was trained on this data, with the data version and score of each, and downloads for the newest 10.
+
+Training saves a version automatically when the data has changed, then trains on a frozen copy of it.
+
+## Train a text sorter
+
+Open a text dataset, go to **Models** and press **Start training**. It needs at least 4 labelled examples per category. You can then try the model, fix labels on its mistakes and download it as a project that runs on its own.
+
+It follows the [SetFit](https://arxiv.org/abs/2209.11055) method, written directly on PyTorch and Transformers rather than using the `setfit` package: it fine-tunes the small `sentence-transformers/all-MiniLM-L6-v2` model, then trains a classifier on top. The first run downloads the base model, about 90 MB, from Hugging Face. Your text isn't sent anywhere. This model is separate from the block designs on the canvas, which still train text from the export.
+
+Versions share files with the dataset, so they take little extra disk space. Examples removed from a dataset stay in older versions until you delete those versions, which erases them from the app. A trained model can still reflect what it learned from them.
+
+## Create a dataset
+
+A dataset can be filled in two ways, and they can be mixed:
+
+- **Find open data** searches public labelled datasets on Hugging Face, shows each one's licence, and
+  copies a sample to this computer. Your search words go to Hugging Face, but your own data doesn't.
+  Only public, ungated datasets with a readable category column work. Trained model downloads include
+  `DATA_SOURCES.md`, which credits what the dataset imported. Check each licence yourself.
+- **Labelling by keyboard** sorts your own images and text: number keys choose a category, S skips,
+  X removes and Z undoes. A model trained on the dataset can suggest labels for the remaining images,
+  starting with the ones it's least sure about.
+
+Text labels download as `texts.csv`, which goes at `data/texts.csv` in a text project. Mistakes shown on
+the Train step can be moved to the right category or removed.
 
 ## Saved projects
 
@@ -77,6 +124,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/graph.py` validates a build and works out every shape.
 - `backend/aibricks/codegen.py` and `brick_sources.py` write the PyTorch project.
 - `backend/aibricks/code_parser.py` turns `model.py` back into blocks without running it.
+- `backend/aibricks/datasets.py` stores datasets and their categories.
 - `backend/aibricks/labelling.py` stores unsorted images and text, and makes label suggestions.
 - `backend/aibricks/opendata.py` searches and imports open datasets from Hugging Face.
 - `backend/aibricks/projects.py` stores saved projects as JSON files.

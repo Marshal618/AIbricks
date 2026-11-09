@@ -22,6 +22,7 @@ class ProjectIn(BaseModel):
     nodes: list[dict[str, Any]] = Field(max_length=1000)
     edges: list[dict[str, Any]] = Field(max_length=5000)
     kitId: str | None = Field(default=None, max_length=80)
+    datasetId: str | None = Field(default=None, max_length=40)
 
 
 def _path(project_id: str):
