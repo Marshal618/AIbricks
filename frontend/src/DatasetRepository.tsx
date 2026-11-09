@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
 import { ExplainableText } from "./Explain";
+import { ModelApp } from "./ModelApp";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { CompareModels, ModelCardView } from "./ModelInsights";
 import { WebcamTry } from "./Webcam";
@@ -493,6 +494,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
           <h2>Try the newest model</h2>
           <p className="muted small">{`${newestPhoto.projectName}, trained on data v${newestPhoto.datasetVersion ?? "?"}. Hold things up to the camera and watch its guesses change.`}</p>
           <WebcamTry key={newestPhoto.id} jobId={newestPhoto.id} beginner={beginner} />
+          <ModelApp jobId={newestPhoto.id} beginner={beginner} />
         </section>
       )}
       {newestSound && <SoundTry key={newestSound.id} model={newestSound} beginner={beginner} />}

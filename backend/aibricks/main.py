@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, system, tables, textmodels, training, versions
+from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, system, tables, textmodels, training, versions, webapp
 
 
 @contextlib.asynccontextmanager
@@ -260,6 +260,26 @@ async def explain_image(job_id: str, request: Request) -> dict:
         return await run_in_threadpool(training.predict_live, job_id, data, True)
     except training.TrainingError as error:
         raise _raise(error) from None
+
+
+_APP_POLICY = (
+    "default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "
+    "connect-src data: https: http:; style-src 'unsafe-inline'; img-src blob: data:; media-src blob: mediastream:; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+)
+
+
+@app.get("/api/train/{job_id}/app")
+def model_app(job_id: str, download: bool = False) -> Response:
+    """A web page that runs this photo model by itself, in any browser, with its own rules."""
+    try:
+        text, name = webapp.page(job_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    headers = {"Content-Security-Policy": _APP_POLICY, "Cache-Control": "no-store"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    return Response(text, media_type="text/html; charset=utf-8", headers=headers)
 
 
 @app.get("/api/train/{job_id}/mistakes/{index}")

@@ -3,6 +3,7 @@ import * as api from "./api";
 import { useEditor } from "./context";
 import { LossChart } from "./LossChart";
 import { ExplainablePhoto } from "./Explain";
+import { ModelApp } from "./ModelApp";
 import { WebcamTry } from "./Webcam";
 import type { DatasetInfo, DatasetSummary, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
 
@@ -632,6 +633,7 @@ function TryModel({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
         />
       </div>
       <WebcamTry jobId={job.id} beginner={beginner} />
+      <ModelApp jobId={job.id} beginner={beginner} />
       {asking && <p className="small muted field-note" role="status">Asking the model…</p>}
       {problem && <div className="result result-fail field-note" role="alert"><p>{problem}</p></div>}
       {answers && (

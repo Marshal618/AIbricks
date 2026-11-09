@@ -431,3 +431,5 @@ export async function listen(job: string, recording: Blob, explain: boolean): Pr
 }
 
 export const fetchSoundMistakes = (job: string): Promise<{ mistakes: SoundMistake[]; total: number }> => getJson(`/api/models/${job}/sound-mistakes`);
+
+export const modelAppUrl = (id: string, download = false) => `/api/train/${id}/app${download ? "?download=true" : ""}`;

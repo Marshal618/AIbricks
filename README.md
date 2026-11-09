@@ -96,6 +96,14 @@ Every run holds back about 20% of the data to check the model on. The held-back 
 
 **Card** shows a model card for any finished model, with sections from Mitchell et al. (2019): details, intended use, training data, how it was checked, results with a likely range for the accuracy, and limitations worked out from the results, such as weak categories, uneven data or a small check. You write the intended use, and downloads include the card as `MODEL_CARD.md`.
 
+## Turn a photo model into an app
+
+**Open as an app** and **Download app** appear under the newest photo model on the Models tab and on the Train step. They make a single web page that runs the model by itself in any browser, with the camera or a chosen photo. Photos are checked on the device and never uploaded.
+
+The page can follow simple rules: when it's at least a chosen percentage sure of a category for half a second, it can play a beep, show a message, count, or send the result to a web address you type, such as an [ntfy](https://ntfy.sh) topic. Rules are saved in that browser.
+
+The model is exported to [ONNX](https://onnx.ai), an open format for trained models, and run by ONNX Runtime Web. That runtime loads from a pinned CDN version, checked against a fixed hash, so the page needs internet the first time it opens. When it opens, it runs a fixed test pattern and compares the answer with PyTorch's, and it warns you if they differ. Phones only allow the camera on `https://` pages, so put the file on any website, such as GitHub Pages, to use it on a phone. Models over 120 MB, like the vision transformer, are too big for a page. Text and sound models can't become apps yet.
+
 ## Sort sounds
 
 Create a dataset with the type **Sound**. It starts with a **Background noise** category, because without one the model has to pick one of your sounds even when nothing is happening.
