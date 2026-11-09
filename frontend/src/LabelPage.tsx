@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import * as api from "./api";
 import { FindData } from "./FindData";
+import { WebcamCapture } from "./Webcam";
 import type { DatasetSummary, ImageQueue, LabelItem, TextQueue } from "./types";
 
 interface Props {
@@ -265,6 +266,10 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
     onChanged();
   };
 
+  const addedFromCamera = useCallback((category: string) => {
+    setCounts((current) => ({ ...current, [category]: (current[category] ?? 0) + 1 }));
+  }, []);
+
   const uploading = upload !== null && upload.done < upload.total;
   const sameCategories = queue?.modelCategories !== null && queue?.modelCategories !== undefined
     && JSON.stringify(queue.modelCategories) === JSON.stringify([...categories].sort());
@@ -274,6 +279,7 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
+      <WebcamCapture datasetId={datasetId} categories={categories} onAdded={addedFromCamera} onDone={onChanged} />
       <FindData datasetId={datasetId} kind="image" categories={categories} onImported={() => { void load(); onChanged(); }} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">

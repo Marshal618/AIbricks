@@ -34,7 +34,7 @@ include `review.py` for the same list and `serve.py`, a small FastAPI web API fo
 
 ## The three screens
 
-- **Home** is where you start, with your recent models and datasets.
+- **Home** shows your workspace: totals, the newest training runs from every dataset with their status and scores, your builds and datasets, and what this computer trains on.
 - **Data labeller** holds your datasets. Each one has its own categories, images or text, and credits.
 - **Model builder** is the canvas and the Design, Code, Test, Train and Export steps.
 
@@ -71,6 +71,30 @@ Each dataset has four tabs:
 - **Models** lists what was trained on this data, with the data version and score of each, and downloads for the newest 10.
 
 Training saves a version automatically when the data has changed, then trains on a frozen copy of it.
+
+## Use your webcam
+
+On a photo dataset's **Label** tab, **Use webcam** opens the camera. Hold a category's button, or focus it and hold Space, to take 4 photos a second straight into that category. The camera only runs while the panel is open, and photos are saved on this computer like any others, so versions and the label check include them.
+
+**Try it with your webcam** appears under the newest photo model on the Models tab and after training in the Model builder. It shows the model's guesses live. The model stays loaded in one background process while you use it, so each frame is answered in milliseconds rather than the second or so it takes to start Python, and it closes after 2 minutes unused.
+
+## See what a model looked at
+
+**Where did it look?** appears on a photo you try, on each held-back photo the model got wrong, and as **Show where it looks** on the webcam. It shades the photo so the parts the model used glow and the rest is dimmed. Use it to catch a model that learned the background instead of the object, such as every mug photo being taken on the same table.
+
+It uses Grad-CAM (Selvaraju et al., 2017) on the last layer that still keeps the photo's layout. Models with no such layer, such as the vision transformer, use pixel gradients instead, which are coarser. The original Grad-CAM study found these maps helped people with no machine-learning training tell a stronger model from a weaker one.
+
+For text, **Which words mattered?** removes each word in turn and measures how far the top answer's chance falls without it. Words that pushed toward the answer are shaded blue and words that pushed against it orange. Only the first 80 words are checked.
+
+Both show where the model looked, not proof of why it answered. A model can look in the right place and still be wrong.
+
+## Compare models and read their cards
+
+Every run holds back about 20% of the data to check the model on. The held-back examples are picked by a fingerprint of each photo, text or row rather than at random, so models trained on the same dataset are checked on mostly the same examples, even after you add data.
+
+**Compare two models** on the Models tab checks them only on the examples both held back, which neither learned from. It counts the examples one got right and the other missed, and uses McNemar's exact test (Dietterich, 1998) to say whether the gap is likely to be luck. Models that predict numbers are compared by which was closer on each row. Models trained before this feature was added need training again to be compared.
+
+**Card** shows a model card for any finished model, with sections from Mitchell et al. (2019): details, intended use, training data, how it was checked, results with a likely range for the accuracy, and limitations worked out from the results, such as weak categories, uneven data or a small check. You write the intended use, and downloads include the card as `MODEL_CARD.md`.
 
 ## Train a text sorter
 
@@ -130,6 +154,8 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/projects.py` stores saved projects as JSON files.
 - `backend/aibricks/runner.py` runs the test in a separate, time-limited process.
 - `backend/aibricks/training.py` stores your images and runs training and predictions.
+- `backend/aibricks/explain.py` makes the heatmaps and word weights that show where a model looked.
+- `backend/aibricks/system.py` reports the training device and workspace size for the home screen.
 
 ## Before hosting it publicly
 

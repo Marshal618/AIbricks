@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, health, projects, runner, tables, textmodels, training, versions
+from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, system, tables, textmodels, training, versions
 
 
 @contextlib.asynccontextmanager
@@ -238,6 +238,30 @@ async def predict(job_id: str, request: Request) -> dict:
         raise _raise(error) from None
 
 
+@app.post("/api/train/{job_id}/predict-live")
+async def predict_live(job_id: str, request: Request, explain: bool = False) -> dict:
+    """For webcam frames: keeps the model loaded between requests so answers come back quickly.
+
+    With explain=true, the reply also has a heatmap of where in the photo the model looked.
+    """
+    data = await _read_upload(request)
+    try:
+        reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return reply if explain else {"answers": reply["answers"]}
+
+
+@app.post("/api/train/{job_id}/explain")
+async def explain_image(job_id: str, request: Request) -> dict:
+    """The model's answers for a photo, and a heatmap of where it looked."""
+    data = await _read_upload(request)
+    try:
+        return await run_in_threadpool(training.predict_live, job_id, data, True)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
 @app.get("/api/train/{job_id}/mistakes/{index}")
 def mistake_image(job_id: str, index: int) -> FileResponse:
     try:
@@ -266,7 +290,8 @@ def download_trained(job_id: str) -> FileResponse:
     handle, path = tempfile.mkstemp(suffix=".zip")
     os.close(handle)
     try:
-        job = training.bundle(job_id, Path(path), versions.credits(training.stored(job_id)))
+        stored = training.stored(job_id)
+        job = training.bundle(job_id, Path(path), versions.credits(stored), cards.markdown(stored))
     except training.TrainingError as error:
         os.unlink(path)
         raise _raise(error) from None
@@ -575,6 +600,21 @@ def delete_version(dataset_id: str, number: int) -> dict:
 
 # ------------------------------------------------------------- models from a dataset
 
+@app.get("/api/models")
+def list_all_models(limit: int = Query(default=20, ge=1, le=50)) -> dict:
+    """The newest runs from every dataset, each with its dataset's name."""
+    names = {row["id"]: row["name"] for row in datasets.listing()}
+    rows = training.all_models(limit)
+    for row in rows:
+        row["datasetName"] = names.get(row["dataset"])
+    return {"models": rows}
+
+
+@app.get("/api/system")
+def system_info() -> dict:
+    return system.info()
+
+
 @app.get("/api/datasets/{dataset_id}/models")
 def list_dataset_models(dataset_id: str) -> dict:
     try:
@@ -582,6 +622,28 @@ def list_dataset_models(dataset_id: str) -> dict:
         return {"models": training.saved_models(dataset_id)}
     except training.TrainingError as error:
         raise _raise(error) from None
+
+
+@app.get("/api/datasets/{dataset_id}/compare")
+def compare_models(
+    dataset_id: str, first: str = Query(min_length=1, max_length=40), second: str = Query(min_length=1, max_length=40),
+) -> dict:
+    """Compares two models on the held-back examples they share."""
+    try:
+        datasets._read(dataset_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return _dataset_reply(comparing.compare, dataset_id, first, second)
+
+
+@app.get("/api/models/{job_id}/card")
+def model_card(job_id: str) -> dict:
+    return _dataset_reply(cards.card, job_id)
+
+
+@app.put("/api/models/{job_id}/card")
+def update_model_card(job_id: str, notes: cards.CardNotes) -> dict:
+    return _dataset_reply(cards.save_notes, job_id, notes)
 
 
 @app.delete("/api/models/{job_id}")
@@ -607,6 +669,15 @@ def train_text_model(dataset_id: str) -> dict:
 def try_text_model(job_id: str, request: TextToTry) -> dict:
     try:
         return {"answers": textmodels.try_text(job_id, request.text)}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.post("/api/models/{job_id}/explain")
+def explain_text_model(job_id: str, request: TextToTry) -> dict:
+    """The model's answers, and how much each word pushed it toward the top one."""
+    try:
+        return explaining.explain_text(job_id, request.text)
     except training.TrainingError as error:
         raise _raise(error) from None
 

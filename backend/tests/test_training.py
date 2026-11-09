@@ -1,4 +1,5 @@
 """Training on the user's own images inside the app, then asking the trained model."""
+import hashlib
 import io
 import json
 import random
@@ -51,6 +52,24 @@ RED, BLUE = (200, 20, 20), (20, 20, 200)
 
 def upload(category, data):
     return client.post("/api/dataset/images", params={"category": category}, content=data, headers=BINARY)
+
+
+def _split_rank(data):
+    """Where a photo falls in training's held-back order: the lowest fingerprints are held back."""
+    name = hashlib.sha256(data).hexdigest()[:32] + ".png"
+    return hashlib.sha256(name.encode()).hexdigest()
+
+
+def held_back_blues(filled, count=3):
+    """Blue photos certain to be held back alongside fill(filled), for filing wrongly as Red.
+
+    Training holds back photos by fingerprint, so a mistake only shows if a wrong one lands there.
+    """
+    proper = sorted(_split_rank(picture(colour, seed)) for seed in range(filled) for colour in (RED, BLUE))
+    ranks = proper[(2 * filled + count) // 5 - count]  # below this, a planted photo is always held back
+    chosen = [picture(BLUE, seed) for seed in range(100, 5000) if _split_rank(picture(BLUE, seed)) < ranks][:count]
+    assert len(chosen) == count
+    return chosen
 
 
 def fill(amount=20):
@@ -275,10 +294,10 @@ def test_only_image_sorting_builds_get_predict_py():
 
 
 def test_mistakes_show_the_right_image_and_vanish_with_removal(workspace):
-    fill(10)
-    # Half of the Red images are really blue, so the model has to get some wrong.
-    for seed in range(100, 110):
-        assert upload("Red", picture(BLUE, seed)).status_code == 200
+    fill(20)
+    # Some Red images are really blue, and they're held back, so the model has to get some wrong.
+    for data in held_back_blues(20):
+        assert upload("Red", data).status_code == 200
     graph = build()
     mark_tested(graph)
     client.post("/api/train", json=graph)

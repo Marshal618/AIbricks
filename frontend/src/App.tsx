@@ -41,18 +41,18 @@ interface Saved {
   datasetId?: string | null;
 }
 
-type Screen = { name: "home" } | { name: "data"; dataset: string | null } | { name: "build" };
+type Screen = { name: "home" } | { name: "data"; dataset: string | null; tab?: "models" } | { name: "build" };
 
 function screenFromHash(): Screen {
   const parts = window.location.hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "build") return { name: "build" };
-  if (parts[0] === "data") return { name: "data", dataset: parts[1] || null };
+  if (parts[0] === "data") return { name: "data", dataset: parts[1] || null, tab: parts[1] && parts[2] === "models" ? "models" : undefined };
   return { name: "home" };
 }
 
 function hashOf(screen: Screen) {
   if (screen.name === "build") return "#/build";
-  if (screen.name === "data") return screen.dataset ? `#/data/${screen.dataset}` : "#/data";
+  if (screen.name === "data") return screen.dataset ? `#/data/${screen.dataset}${screen.tab ? `/${screen.tab}` : ""}` : "#/data";
   return "#/";
 }
 
@@ -735,13 +735,13 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
               onContinueModel={() => goTo({ name: "build" })}
               onOpenModel={(id) => { api.fetchProject(id).then((data) => openProject(id, data)).catch(() => say("That model could not open.")); }}
               onOpenData={() => goTo({ name: "data", dataset: null })}
-              onOpenDataset={(id) => goTo({ name: "data", dataset: id })}
+              onOpenDataset={(id, tab) => goTo({ name: "data", dataset: id, tab })}
             />
           </div>
         )}
         {screen.name === "data" && (
           <div className="page">
-            <DataScreen mode={mode} datasetId={screen.dataset} onOpen={(id) => goTo({ name: "data", dataset: id })} onBuild={buildWithDataset} />
+            <DataScreen mode={mode} datasetId={screen.dataset} tab={screen.tab} onOpen={(id) => goTo({ name: "data", dataset: id })} onBuild={buildWithDataset} />
           </div>
         )}
         {screen.name === "build" && (<>

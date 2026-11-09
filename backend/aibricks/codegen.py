@@ -225,21 +225,31 @@ def _load_image(path, transform):
     return transform(Image.open(path).convert("RGB"))
 
 
+def _hash(name):
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+
+
 def _split(dataset):
-    """Holds back 20% of the images to check the model on data it never trained on."""
+    """Holds back 20% of the images to check the model on data it never trained on.
+
+    The images held back are picked by a fingerprint of their file name, not at random, so models
+    trained on the same images are checked on the same ones and can be compared fairly.
+    """
     if len(dataset) < 5:
         raise ValueError(f"Found only {len(dataset)} images. Add at least 5 before training.")
     val_size = max(1, len(dataset) // 5)
-    generator = torch.Generator().manual_seed(0)
-    return random_split(dataset, [len(dataset) - val_size, val_size], generator=generator)
+    paths = [sample[0] for sample in dataset.samples] if hasattr(dataset, "samples") else dataset.paths
+    order = sorted(range(len(paths)), key=lambda index: _hash(Path(paths[index]).name))
+    return Subset(dataset, sorted(order[val_size:])), Subset(dataset, sorted(order[:val_size]))
 '''
 
 _IMAGE_CLASSIFY = '''"""Loads your images. Edit the marked section, then run: python train.py"""
+import hashlib
 from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 
 from model import CLASS_NAMES
@@ -282,11 +292,12 @@ def load_datasets():
 
 _IMAGE_NUMBER = '''"""Loads your images and their numbers. Edit the marked section, then run: python train.py"""
 import csv
+import hashlib
 from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 
 @@BANNER@@@@COMMON@@
@@ -324,11 +335,12 @@ def load_datasets():
 '''
 
 _IMAGE_REBUILD = '''"""Loads your normal images. Edit the marked section, then run: python train.py"""
+import hashlib
 from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 
 @@BANNER@@@@COMMON@@

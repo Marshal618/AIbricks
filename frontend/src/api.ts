@@ -1,4 +1,4 @@
-import type { Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -69,7 +69,7 @@ export async function downloadProject(graph: GraphPayload) {
   URL.revokeObjectURL(url);
 }
 
-function sendFile(path: string, file: File) {
+function sendFile(path: string, file: Blob) {
   return fetch(path, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
 }
 
@@ -365,3 +365,41 @@ export async function startHealthCheck(id: string): Promise<void> {
 
 export const reviewHealth = (id: string, body: { action: "keep" | "move" | "remove" | "drop" | "keep-pair"; id?: string; category?: string; pair?: string[] }): Promise<DataHealth> =>
   sendJson(`/api/datasets/${id}/health/review`, body);
+
+export async function compareModels(dataset: string, first: string, second: string): Promise<ModelComparison> {
+  return getJson(`/api/datasets/${dataset}/compare?${new URLSearchParams({ first, second })}`);
+}
+
+export const fetchModelCard = (job: string): Promise<ModelCard> => getJson(`/api/models/${job}/card`);
+
+export const updateModelCard = (job: string, notes: ModelCardNotes): Promise<ModelCard> => putJson(`/api/models/${job}/card`, notes);
+
+export async function predictLive(id: string, file: File): Promise<PredictAnswer[]> {
+  const response = await sendFile(`/api/train/${id}/predict-live`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return (await response.json()).answers;
+}
+
+export async function explainImage(id: string, file: Blob): Promise<ImageExplanation> {
+  const response = await sendFile(`/api/train/${id}/explain`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function predictLiveExplained(id: string, file: File): Promise<ImageExplanation> {
+  const response = await sendFile(`/api/train/${id}/predict-live?explain=true`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function explainText(job: string, text: string): Promise<TextExplanation> {
+  const response = await fetch(`/api/models/${job}/explain`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export async function fetchAllModels(limit = 20): Promise<WorkspaceModel[]> {
+  return (await getJson(`/api/models?limit=${limit}`)).models;
+}
+
+export const fetchSystem = (): Promise<SystemInfo> => getJson("/api/system");

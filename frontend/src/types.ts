@@ -412,3 +412,70 @@ export interface DataHealth {
   table?: { rows: number; columns: number; repeatedRows: number; blankShare: number; constantColumns: string[] } | null;
   job: { status: "running" | "finished" | "failed"; stepsDone: number; stepsTotal: number; error: string | null; count: number } | null;
 }
+
+export interface ModelComparison {
+  first: { id: string; name: string; version: number | null; startedAt: number };
+  second: { id: string; name: string; version: number | null; startedAt: number };
+  task: "category" | "number";
+  shared: number;
+  verdict: "too-few" | "same" | "first" | "second" | "unclear";
+  summary: string;
+  firstScore?: number;
+  secondScore?: number;
+  onlyFirst?: number;
+  onlySecond?: number;
+  bothRight?: number;
+  neitherRight?: number;
+  ties?: number;
+  chanceOfLuck?: number;
+}
+
+export interface ModelCardNotes {
+  intendedUse: string;
+  notFor: string;
+}
+
+export interface ModelCard {
+  jobId: string;
+  notes: ModelCardNotes;
+  sections: { title: string; lines: string[]; editable?: boolean }[];
+  markdown: string;
+}
+
+export interface Heatmap {
+  width: number;
+  height: number;
+  /** Row by row, 0 to 1, where 1 is where the model looked most. */
+  values: number[];
+  method: "gradcam" | "gradients";
+  category: string;
+}
+
+export interface ImageExplanation {
+  answers: PredictAnswer[];
+  heatmap: Heatmap;
+}
+
+export interface TextExplanation {
+  answers: PredictAnswer[];
+  category: string;
+  /** How much the top answer's chance falls when this word is removed. Negative words pushed against it. */
+  words: { start: number; end: number; weight: number }[];
+  wordCount: number;
+}
+
+export interface WorkspaceModel extends SavedModel {
+  dataset: string;
+  datasetName: string | null;
+  finishedAt: number | null;
+}
+
+export interface SystemInfo {
+  device: "cuda" | "mps" | "cpu" | "unknown";
+  deviceLabel: string;
+  torch: string | null;
+  python: string;
+  platform: string;
+  cpus: number;
+  storage: { path: string; bytes: number; freeBytes: number; parts: { data: number; models: number; projects: number; downloads: number } };
+}

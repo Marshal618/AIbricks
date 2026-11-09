@@ -20,6 +20,8 @@ const TABS: { id: Tab; name: string }[] = [
 interface Props {
   mode: Mode;
   datasetId: string | null;
+  /** The tab to open the dataset on, when it shouldn't be the usual one. */
+  tab?: "models";
   onOpen: (id: string | null) => void;
   onBuild: (dataset: DatasetSummary) => void;
 }
@@ -28,9 +30,9 @@ function splitNames(text: string) {
   return text.split(",").map((name) => name.trim()).filter(Boolean);
 }
 
-export function DataScreen({ mode, datasetId, onOpen, onBuild }: Props) {
+export function DataScreen({ mode, datasetId, tab, onOpen, onBuild }: Props) {
   return datasetId
-    ? <DatasetDetail key={datasetId} mode={mode} datasetId={datasetId} onBack={() => onOpen(null)} onBuild={onBuild} />
+    ? <DatasetDetail key={datasetId} mode={mode} datasetId={datasetId} initialTab={tab} onBack={() => onOpen(null)} onBuild={onBuild} />
     : <DatasetList mode={mode} onOpen={onOpen} />;
 }
 
@@ -121,13 +123,13 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
   );
 }
 
-function DatasetDetail({ mode, datasetId, onBack, onBuild }: { mode: Mode; datasetId: string; onBack: () => void; onBuild: (dataset: DatasetSummary) => void }) {
+function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild }: { mode: Mode; datasetId: string; initialTab?: Tab; onBack: () => void; onBuild: (dataset: DatasetSummary) => void }) {
   const beginner = mode === "beginner";
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
   const [missing, setMissing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [newCategory, setNewCategory] = useState("");
-  const [tab, setTab] = useState<Tab | null>(null);
+  const [tab, setTab] = useState<Tab | null>(initialTab ?? null);
 
   const load = useCallback(async () => {
     try {

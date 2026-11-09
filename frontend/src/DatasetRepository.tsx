@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
+import { ExplainableText } from "./Explain";
+import { CompareModels, ModelCardView } from "./ModelInsights";
+import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
 import type { DatasetPreview, DatasetSummary, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
@@ -243,7 +246,7 @@ export function DatasetVersions({ dataset, beginner, onRestored }: { dataset: Da
 
 // --------------------------------------------------------------------- models
 
-function score(model: SavedModel) {
+export function score(model: SavedModel) {
   if (model.status === "running") return "Training";
   if (model.metrics?.task === "number") return `±${(model.metrics.mae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   if (!model.best || model.best.accuracy === null) return model.status === "failed" ? "Failed" : "No score";
@@ -297,6 +300,7 @@ function TextTrainer({ dataset, beginner, running, busyElsewhere, onStart, onSto
 function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) {
   const [text, setText] = useState("");
   const [answers, setAnswers] = useState<PredictAnswer[] | null>(null);
+  const [asked, setAsked] = useState("");
   const [asking, setAsking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -307,6 +311,7 @@ function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) 
     setAnswers(null);
     try {
       setAnswers(await api.tryTextModel(model.id, text));
+      setAsked(text);
     } catch (error) {
       setProblem(message(error, "The model couldn't answer."));
     } finally {
@@ -335,6 +340,7 @@ function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) 
           ))}
         </ul>
       )}
+      {answers && <div className="field-note"><ExplainableText key={asked} jobId={model.id} text={asked} beginner={beginner} /></div>}
     </section>
   );
 }
@@ -379,6 +385,7 @@ function TextMistakes({ model, dataset, beginner, onChanged }: { model: SavedMod
                 <div className="project-text">
                   <span>{row.text}</span>
                   <span className="muted small">Filed under {row.actual}, model guessed {row.guess} ({Math.round(row.chance * 100)}% sure)</span>
+                  <div><ExplainableText jobId={model.id} text={row.text} beginner={beginner} /></div>
                 </div>
                 <label className="text-relabel">
                   <span className="visually-hidden">Label for this text</span>
@@ -401,6 +408,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
   const [known, setKnown] = useState<Set<number>>(new Set());
   const [problem, setProblem] = useState<string | null>(null);
   const [busyElsewhere, setBusyElsewhere] = useState(false);
+  const [cardFor, setCardFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [rows, versions, latest] = await Promise.all([api.fetchDatasetModels(dataset.id), api.fetchVersions(dataset.id), api.fetchTraining()]);
@@ -442,7 +450,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     }
   };
   const failed = models?.[0]?.status === "failed" ? models[0] : null;
+  const cardForModel = models?.find((model) => model.id === cardFor) ?? null;
   const newestTable = models?.find((model) => model.task === "table" && model.status !== "running" && model.hasModel) ?? null;
+  const newestPhoto = models?.find((model) => model.task === "image" && model.status === "finished" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -462,14 +472,21 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
       {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
+      {newestPhoto && (
+        <section className="card">
+          <h2>Try the newest model</h2>
+          <p className="muted small">{`${newestPhoto.projectName}, trained on data v${newestPhoto.datasetVersion ?? "?"}. Hold things up to the camera and watch its guesses change.`}</p>
+          <WebcamTry key={newestPhoto.id} jobId={newestPhoto.id} beginner={beginner} />
+        </section>
+      )}
       {newestText && <TryText key={newestText.id} model={newestText} beginner={beginner} />}
       {newestText && <TextMistakes key={`m${newestText.id}`} model={newestText} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       <section className="card">
         <h2>Models trained on this data</h2>
         <p className="muted small">
           {beginner
-            ? "Each model shows which version of the data trained it and how often it was right on held-back examples. Scores from small datasets are rough, and each run can hold back different examples."
-            : "Score is accuracy on the held-back split of each run, so it's a rough comparison across versions. The 10 newest model files are kept."}
+            ? "Each model shows which version of the data trained it and how often it was right on held-back examples. Scores from small datasets are rough. To see if one model is really better, compare them below."
+            : "Score is accuracy on each run's held-back split. Splits are chosen by content fingerprint, so runs share most held-back examples; use Compare for a paired test. The 10 newest model files are kept."}
         </p>
         {models?.length === 0 && dataset.kind === "image" && (
           <div className="notice field-note">
@@ -497,12 +514,15 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
               </div>
               <div className="label-buttons">
                 {model.hasModel && model.status !== "running" && <a className="button button-small" href={`/api/train/${model.id}/download`} aria-label={`Download ${model.projectName} from ${when(model.startedAt)}`}>Download</a>}
+                {model.status === "finished" && <button className="button button-small" aria-pressed={cardFor === model.id} aria-label={`Model card for ${model.projectName} from ${when(model.startedAt)}`} onClick={() => setCardFor(cardFor === model.id ? null : model.id)}>Card</button>}
                 {model.status !== "running" && <button className="button button-small button-quiet" aria-label={`Delete ${model.projectName} from ${when(model.startedAt)}`} onClick={() => void remove(model)}>Delete</button>}
               </div>
             </li>
           ))}
         </ul>
       </section>
+      {cardForModel && <ModelCardView key={`card-${cardForModel.id}`} model={cardForModel} onClose={() => setCardFor(null)} />}
+      {models && <CompareModels datasetId={dataset.id} models={models} beginner={beginner} />}
     </>
   );
 }
