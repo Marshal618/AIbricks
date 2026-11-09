@@ -47,7 +47,7 @@ def _inbox_path(image_id: str, dataset: str = training.DEFAULT_DATASET) -> Path:
     return inbox(dataset) / image_id
 
 
-_KIND_NAMES = {"image": "photo", "text": "text", "table": "spreadsheet"}
+_KIND_NAMES = {"image": "photo", "text": "text", "table": "spreadsheet", "sound": "sound"}
 
 
 def _require_kind(dataset: str, kind: str) -> None:
@@ -57,7 +57,7 @@ def _require_kind(dataset: str, kind: str) -> None:
     from . import datasets  # imported here because datasets imports this module
     actual = datasets._read(dataset)["kind"]
     if actual != kind:
-        things = {"image": "photos", "text": "text", "table": "spreadsheets"}
+        things = {"image": "photos", "text": "text", "table": "spreadsheets", "sound": "recordings"}
         raise TrainingError(422, f"This is a {_KIND_NAMES.get(actual, actual)} dataset, so it can't hold {things[kind]}.")
 
 

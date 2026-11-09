@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEv
 import * as api from "./api";
 import { useEditor } from "./context";
 import { LossChart } from "./LossChart";
-import type { DatasetInfo, DatasetSummary, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
+import { ExplainablePhoto } from "./Explain";
+import { ModelApp } from "./ModelApp";
+import { TrainingCheck } from "./TrainingCheck";
+import { WebcamTry } from "./Webcam";
+import type { DatasetInfo, DatasetSummary, FixKind, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
 
 const MODELS_KEPT = 10;
 
@@ -14,6 +18,8 @@ interface Props {
   datasetId: string | null;
   onDatasetChange: (id: string | null) => void;
   onOpenData: (id: string | null) => void;
+  onOpenDatasetTab: (id: string, tab: "models" | "label") => void;
+  onApplyFix: (fix: FixKind) => void;
   onUseCategories: (names: string[]) => void;
 }
 
@@ -44,7 +50,7 @@ function duration(seconds: number) {
   return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
 
-export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onDatasetChange, onOpenData, onUseCategories }: Props) {
+export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onDatasetChange, onOpenData, onOpenDatasetTab, onApplyFix, onUseCategories }: Props) {
   const { analysis, mode } = useEditor();
   const beginner = mode === "beginner";
   const categories = analysis?.categories ?? null;
@@ -327,11 +333,23 @@ export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onData
         {job && <Progress job={job} beginner={beginner} perEpoch={elapsedPerEpoch} />}
       </section>
 
+      {job && job.status !== "running" && job.checkup && !stale && (
+        <TrainingCheck
+          findings={job.checkup}
+          available={chosenId ? ["augment", "slower", "longer", "pretrained", "more_photos", "experiment"] : ["augment", "slower", "longer"]}
+          onFix={(fix) => {
+            if (fix === "more_photos" && chosenId) onOpenDatasetTab(chosenId, "label");
+            else if ((fix === "pretrained" || fix === "experiment") && chosenId) onOpenDatasetTab(chosenId, "models");
+            else onApplyFix(fix);
+          }}
+        />
+      )}
       {job && job.status !== "running" && job.hasModel && job.review && !stale && (
         <Mistakes
           jobId={job.id}
           review={job.review}
           categories={Object.keys(job.categories)}
+          beginner={beginner}
           onChanged={(next) => { setJob(next); void loadDataset(); }}
         />
       )}
@@ -509,13 +527,7 @@ function Verdict({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
   );
 }
 
-function MistakeThumb({ src, name }: { src: string; name: string }) {
-  const [missing, setMissing] = useState(false);
-  if (missing) return <span className="mistake-missing muted small">Image removed</span>;
-  return <img src={src} alt={name} loading="lazy" onError={() => setMissing(true)} />;
-}
-
-function Mistakes({ jobId, review, categories, onChanged }: { jobId: string; review: TrainingReview; categories: string[]; onChanged: (job: TrainingJob) => void }) {
+function Mistakes({ jobId, review, categories, beginner, onChanged }: { jobId: string; review: TrainingReview; categories: string[]; beginner: boolean; onChanged: (job: TrainingJob) => void }) {
   const shown = review.mistakes.slice(0, MISTAKES_SHOWN);
   const [problem, setProblem] = useState<string | null>(null);
   const fixes = review.mistakes.filter((mistake) => mistake.movedTo || mistake.removed).length;
@@ -544,13 +556,13 @@ function Mistakes({ jobId, review, categories, onChanged }: { jobId: string; rev
         ? <p className="muted small field-note">It got every held-back image right. Try it on harder images below to find its limits.</p>
         : <>
             <p className="muted small field-note">
-              Most confident mistakes come first. Look for a pattern, such as blurry photos. If an image is filed in the wrong category, move it here.
+              Most confident mistakes come first. Look for a pattern, such as blurry photos, and use “Where did it look?” to check it was looking at the object, not the background. If an image is filed in the wrong category, move it here.
               {review.mistakeCount > shown.length ? ` Showing ${shown.length} of ${review.mistakeCount}.` : ""}
             </p>
             <ul className="mistake-grid">
               {shown.map((mistake, index) => (
                 <li key={`${mistake.actual}/${mistake.file}`}>
-                  <MistakeThumb src={api.mistakeImageUrl(jobId, index)} name={`Filed under ${mistake.actual}, guessed ${mistake.guess}`} />
+                  <ExplainablePhoto className="is-thumb" jobId={jobId} src={api.mistakeImageUrl(jobId, index)} alt={`Filed under ${mistake.actual}, guessed ${mistake.guess}`} beginner={beginner} />
                   <span className="small"><span className="muted">Filed under</span> {mistake.actual}</span>
                   <span className="small"><span className="muted">Guessed</span> {mistake.guess} <span className="muted">{percent(mistake.chance)}</span></span>
                   {mistake.movedTo || mistake.removed
@@ -580,6 +592,7 @@ function Mistakes({ jobId, review, categories, onChanged }: { jobId: string; rev
 function TryModel({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<File | null>(null);
   const [answers, setAnswers] = useState<PredictAnswer[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
@@ -590,6 +603,7 @@ function TryModel({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
   const ask = async (file: File | undefined) => {
     if (!file) return;
     setPreview(URL.createObjectURL(file));
+    setChosen(file);
     setAnswers(null);
     setProblem(null);
     setAsking(true);
@@ -618,7 +632,9 @@ function TryModel({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
         onDragLeave={() => setOver(false)}
         onDrop={(event) => { event.preventDefault(); setOver(false); void ask(event.dataTransfer.files[0]); }}
       >
-        {preview ? <img src={preview} alt="The image you chose" /> : <span className="muted small">Drop an image here</span>}
+        {preview && chosen
+          ? answers ? <ExplainablePhoto jobId={job.id} src={preview} file={chosen} alt="The image you chose" beginner={beginner} /> : <img src={preview} alt="The image you chose" />
+          : <span className="muted small">Drop an image here</span>}
         <button className="button button-small" disabled={asking} onClick={() => input.current?.click()}>{preview ? "Try another image" : "Choose an image"}</button>
         <input
           ref={input}
@@ -630,6 +646,8 @@ function TryModel({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
           onChange={(event) => { void ask(event.target.files?.[0]); event.target.value = ""; }}
         />
       </div>
+      <WebcamTry jobId={job.id} beginner={beginner} />
+      <ModelApp jobId={job.id} beginner={beginner} />
       {asking && <p className="small muted field-note" role="status">Asking the model…</p>}
       {problem && <div className="result result-fail field-note" role="alert"><p>{problem}</p></div>}
       {answers && (

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
+import { ExplainableText } from "./Explain";
+import { FindBetterModel } from "./Experiments";
+import { ModelApp } from "./ModelApp";
+import { TrainingCheck } from "./TrainingCheck";
+import { Why } from "./Ui";
+import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
+import { CompareModels, ModelCardView } from "./ModelInsights";
+import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
-import type { DatasetPreview, DatasetSummary, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
+import type { DatasetPreview, DatasetSummary, GraphPayload, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
 
@@ -107,7 +115,9 @@ export function DatasetOverview({ dataset, beginner, onSaved, onLabel }: { datas
           <div className="preview-category" key={category.name}>
             <h3>{category.name} <span className="muted">{(dataset.counts[category.name] ?? 0).toLocaleString()}</span></h3>
             {category.samples.length === 0 && <p className="muted small">Nothing in this category yet.</p>}
-            {dataset.kind === "image"
+            {dataset.kind === "sound"
+              ? <ClipPreview dataset={dataset} category={category.name} clips={category.samples.map((sample) => sample.id)} />
+              : dataset.kind === "image"
               ? <ul className="preview-images">{category.samples.map((sample, index) => (
                   <li key={sample.id}><img src={api.datasetPreviewImage(dataset.id, category.name, sample.id)} alt={`${category.name} example ${index + 1}`} loading="lazy" /></li>
                 ))}</ul>
@@ -243,7 +253,7 @@ export function DatasetVersions({ dataset, beginner, onRestored }: { dataset: Da
 
 // --------------------------------------------------------------------- models
 
-function score(model: SavedModel) {
+export function score(model: SavedModel) {
   if (model.status === "running") return "Training";
   if (model.metrics?.task === "number") return `±${(model.metrics.mae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   if (!model.best || model.best.accuracy === null) return model.status === "failed" ? "Failed" : "No score";
@@ -297,6 +307,7 @@ function TextTrainer({ dataset, beginner, running, busyElsewhere, onStart, onSto
 function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) {
   const [text, setText] = useState("");
   const [answers, setAnswers] = useState<PredictAnswer[] | null>(null);
+  const [asked, setAsked] = useState("");
   const [asking, setAsking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -307,6 +318,7 @@ function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) 
     setAnswers(null);
     try {
       setAnswers(await api.tryTextModel(model.id, text));
+      setAsked(text);
     } catch (error) {
       setProblem(message(error, "The model couldn't answer."));
     } finally {
@@ -335,6 +347,7 @@ function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) 
           ))}
         </ul>
       )}
+      {answers && <div className="field-note"><ExplainableText key={asked} jobId={model.id} text={asked} beginner={beginner} /></div>}
     </section>
   );
 }
@@ -379,6 +392,7 @@ function TextMistakes({ model, dataset, beginner, onChanged }: { model: SavedMod
                 <div className="project-text">
                   <span>{row.text}</span>
                   <span className="muted small">Filed under {row.actual}, model guessed {row.guess} ({Math.round(row.chance * 100)}% sure)</span>
+                  <div><ExplainableText jobId={model.id} text={row.text} beginner={beginner} /></div>
                 </div>
                 <label className="text-relabel">
                   <span className="visually-hidden">Label for this text</span>
@@ -396,11 +410,14 @@ function TextMistakes({ model, dataset, beginner, onChanged }: { model: SavedMod
   );
 }
 
-export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void }) {
+export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDesign }: {
+  dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void; onOpenDesign: (graph: GraphPayload) => void;
+}) {
   const [models, setModels] = useState<SavedModel[] | null>(null);
   const [known, setKnown] = useState<Set<number>>(new Set());
   const [problem, setProblem] = useState<string | null>(null);
   const [busyElsewhere, setBusyElsewhere] = useState(false);
+  const [cardFor, setCardFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [rows, versions, latest] = await Promise.all([api.fetchDatasetModels(dataset.id), api.fetchVersions(dataset.id), api.fetchTraining()]);
@@ -432,6 +449,17 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     }
   };
 
+  const startSound = async () => {
+    setProblem(null);
+    try {
+      await api.trainSoundModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
   const stop = async (id: string) => {
     setProblem(null);
     try {
@@ -442,7 +470,10 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     }
   };
   const failed = models?.[0]?.status === "failed" ? models[0] : null;
+  const cardForModel = models?.find((model) => model.id === cardFor) ?? null;
   const newestTable = models?.find((model) => model.task === "table" && model.status !== "running" && model.hasModel) ?? null;
+  const newestPhoto = models?.find((model) => model.task === "image" && model.status === "finished" && model.hasModel) ?? null;
+  const newestSound = models?.find((model) => model.task === "sound" && model.status === "finished" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -459,25 +490,51 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
+      <h2 className="section-title">Train</h2>
+      {dataset.kind === "image" && (
+        <div className="train-choices">
+          <FindBetterModel dataset={dataset} beginner={beginner} busyElsewhere={busyElsewhere} onOpenDesign={onOpenDesign} onFinished={() => { void load(); onChanged(); }} />
+          <section className="card">
+            <h2>Design your own</h2>
+            <p className="muted small">Connect blocks yourself in the Model builder, test them, then train.</p>
+            <button className="button button-small field-note" disabled={!dataset.labelled} onClick={onBuild}>Open the Model builder</button>
+          </section>
+        </div>
+      )}
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
+      {(newestTable || newestPhoto || newestSound || newestText) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
       {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
+      {newestPhoto && (
+        <section className="card">
+          <h2>Try it</h2>
+          <p className="muted small">{`${newestPhoto.projectName} · ${score(newestPhoto)} on held-back photos · data v${newestPhoto.datasetVersion ?? "?"}`}</p>
+          <WebcamTry key={newestPhoto.id} jobId={newestPhoto.id} beginner={beginner} />
+          <ModelApp jobId={newestPhoto.id} beginner={beginner} />
+        </section>
+      )}
+      {newestPhoto?.checkup && (
+        <TrainingCheck
+          findings={newestPhoto.checkup}
+          available={["experiment"]}
+          onFix={() => document.querySelector(".find-better")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+        />
+      )}
+      {newestSound && <SoundTry key={newestSound.id} model={newestSound} beginner={beginner} />}
+      {newestSound && <SoundMistakes key={`m${newestSound.id}`} model={newestSound} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       {newestText && <TryText key={newestText.id} model={newestText} beginner={beginner} />}
       {newestText && <TextMistakes key={`m${newestText.id}`} model={newestText} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
+      <h2 className="section-title">All models</h2>
       <section className="card">
         <h2>Models trained on this data</h2>
-        <p className="muted small">
+        <p className="muted small">The score is how often it was right on held-back {dataset.kind === "table" ? "rows" : "examples"} it never learned from.</p>
+        <Why>
           {beginner
-            ? "Each model shows which version of the data trained it and how often it was right on held-back examples. Scores from small datasets are rough, and each run can hold back different examples."
-            : "Score is accuracy on the held-back split of each run, so it's a rough comparison across versions. The 10 newest model files are kept."}
-        </p>
-        {models?.length === 0 && dataset.kind === "image" && (
-          <div className="notice field-note">
-            <span>No models yet.</span>
-            <button className="button button-small" disabled={!dataset.labelled} onClick={onBuild}>Build a model with this data</button>
-          </div>
-        )}
-        {models?.length === 0 && dataset.kind !== "image" && <p className="muted small field-note">No models yet.</p>}
+            ? "Each model also shows which version of the data trained it. Scores from small datasets are rough, so to see if one model is really better than another, compare them below."
+            : "Splits are chosen by content fingerprint, so runs share most held-back examples; use Compare for a paired test. The 10 newest model files are kept."}
+        </Why>
+        {models?.length === 0 && <p className="muted small field-note">No models yet. Train one above.</p>}
         <ul className="project-list">
           {models?.map((model) => (
             <li key={model.id}>
@@ -497,12 +554,15 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
               </div>
               <div className="label-buttons">
                 {model.hasModel && model.status !== "running" && <a className="button button-small" href={`/api/train/${model.id}/download`} aria-label={`Download ${model.projectName} from ${when(model.startedAt)}`}>Download</a>}
+                {model.status === "finished" && <button className="button button-small" aria-pressed={cardFor === model.id} aria-label={`Model card for ${model.projectName} from ${when(model.startedAt)}`} onClick={() => setCardFor(cardFor === model.id ? null : model.id)}>Card</button>}
                 {model.status !== "running" && <button className="button button-small button-quiet" aria-label={`Delete ${model.projectName} from ${when(model.startedAt)}`} onClick={() => void remove(model)}>Delete</button>}
               </div>
             </li>
           ))}
         </ul>
       </section>
+      {cardForModel && <ModelCardView key={`card-${cardForModel.id}`} model={cardForModel} onClose={() => setCardFor(null)} />}
+      {models && <CompareModels datasetId={dataset.id} models={models} beginner={beginner} />}
     </>
   );
 }

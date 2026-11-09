@@ -71,6 +71,7 @@ def answers(encoder, head, labels, texts):
 
 _TRAIN_PY = '''"""Trains the text sorter. Put your labelled text in data/texts.csv (columns: text,label), then run: python train.py"""
 import csv
+import hashlib
 import json
 import os
 import random
@@ -103,12 +104,16 @@ def read_data():
     return {name: grouped[name] for name in sorted(grouped)}
 
 
+def fingerprint(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def split(grouped):
-    rng = random.Random(SEED)
+    """Holds back part of each category. Texts are picked by a fingerprint of their words rather than
+    at random, so models trained on the same texts are checked on the same ones and compare fairly."""
     train, check = {}, []
     for name, texts in grouped.items():
-        texts = sorted(texts)
-        rng.shuffle(texts)
+        texts = sorted(texts, key=fingerprint)
         held = max(1, int(len(texts) * HOLD_BACK))
         check += [(text, name) for text in texts[:held]]
         train[name] = texts[held:held + MAX_PER_CATEGORY]

@@ -344,6 +344,7 @@ def read_config():
 '''
 
 _TRAIN_PY = '''"""Trains the model. Put your table in data/table.csv and choose columns in config.json, then run: python train.py"""
+import hashlib
 import json
 import os
 import shutil
@@ -356,7 +357,6 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.inspection import permutation_importance
 from sklearn.metrics import accuracy_score, log_loss, mean_absolute_error, r2_score
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
 
@@ -369,6 +369,26 @@ IMPORTANCE_ROWS = 2000
 CHOICES_SHOWN = 50
 SUSPICIOUS_SCORE = 0.98
 SUSPICIOUS_SHARE = 0.8
+
+
+def fingerprint(row):
+    """Identifies a row by its values, so the same rows are held back every time."""
+    return hashlib.sha256("\\x1f".join(value or "" for value in row.values()).encode("utf-8")).hexdigest()[:32]
+
+
+def split(keys, answers, task):
+    """Holds back HOLD_BACK of the rows, picked by fingerprint rather than at random, so models
+    trained on the same rows are checked on the same ones and can be compared fairly."""
+    groups = {}
+    for index, answer in enumerate(answers):
+        groups.setdefault(answer if task == "category" else "", []).append(index)
+    train, check = [], []
+    for members in groups.values():
+        members.sort(key=lambda index: keys[index])
+        held = max(1, round(len(members) * HOLD_BACK)) if len(members) > 1 else 0
+        check += members[:held]
+        train += members[held:]
+    return np.array(sorted(train)), np.array(sorted(check))
 
 
 def build(features, task):
@@ -412,6 +432,7 @@ def main():
             continue
         seen.add(key)
         rows.append((row, answer))
+    keys = [fingerprint(row) for row, _ in rows]
     if not rows:
         sys.exit("No rows have a usable answer.")
     inputs = to_array([row for row, _ in rows], features)
@@ -421,9 +442,8 @@ def main():
         _, tally = np.unique(answers, return_counts=True)
         if tally.min() < 2:
             sys.exit("Each answer needs at least 2 different rows.")
-    train_x, check_x, train_y, check_y = train_test_split(
-        inputs, answers, test_size=HOLD_BACK, random_state=SEED, stratify=answers if task == "category" else None,
-    )
+    train_rows, check_rows = split(keys, answers, task)
+    train_x, check_x, train_y, check_y = inputs[train_rows], inputs[check_rows], answers[train_rows], answers[check_rows]
     print(f"Training on {len(train_x)} samples, checking on {len(check_x)}, using cpu.", flush=True)
     print("Step 1/3", flush=True)
     model = build(features, task)
@@ -469,6 +489,11 @@ def main():
     save(model, {"task": task, "target": target, "features": described, "classes": classes})
     with open("data/metrics.json", "w", encoding="utf-8") as file:
         json.dump(metrics, file)
+    # Each held-back row's answer, under its fingerprint only, so two models can be compared row by row.
+    held = [[keys[index], answer.item() if hasattr(answer, "item") else answer, guess.item() if hasattr(guess, "item") else guess]
+            for index, answer, guess in zip(check_rows, check_y, guesses)]
+    with open("data/held_out.json", "w", encoding="utf-8") as file:
+        json.dump(held, file)
     print("Step 3/3", flush=True)
     accuracy_text = f"{100 * score:.1f}" if task == "category" else "nan"
     print(f"Epoch 1/1  training loss nan  check loss {check_loss:.4f}  check accuracy {accuracy_text}%", flush=True)

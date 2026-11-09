@@ -24,6 +24,8 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from . import explain
+
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_IMAGE_PIXELS = 50_000_000
 MAX_IMAGES = 20_000
@@ -125,6 +127,8 @@ def read_image(data: bytes) -> str:
 
 
 def add_image(category: str, data: bytes, dataset: str = DEFAULT_DATASET) -> dict:
+    from . import labelling  # imported here, because labelling imports this module
+    labelling._require_kind(dataset, "image")
     extension = read_image(data)
     with _lock:
         if image_total() >= MAX_IMAGES:
@@ -283,25 +287,34 @@ def public(job: Job | None) -> dict | None:
         return None
     data = asdict(job)
     data["elapsedSeconds"] = (job.finishedAt or time.time()) - job.startedAt
+    if job.task == "image" and job.status in ("finished", "stopped"):
+        from . import checkup  # imported here to keep this module's imports light
+        data["checkup"] = checkup.check(job.epochs, job.baseline)
     del data["files"], data["slug"], data["stopRequested"]
     return data
+
+
+def _model_row(job: Job) -> dict:
+    row = public(job)
+    del row["epochs"]
+    if row["review"]:
+        row["review"] = {key: row["review"][key] for key in ("total", "correct", "categories")}
+    row["modelBytes"] = _model_bytes(job) if job.hasModel else 0
+    return row
 
 
 def saved_models(dataset: str) -> list[dict]:
     """The runs trained from a dataset, newest first, without their per-epoch detail."""
     with _lock:
         current()
-        rows = []
-        for job in _saved_jobs():
-            if job.dataset != dataset:
-                continue
-            row = public(job)
-            del row["epochs"]
-            if row["review"]:
-                row["review"] = {key: row["review"][key] for key in ("total", "correct", "categories")}
-            row["modelBytes"] = _model_bytes(job) if job.hasModel else 0
-            rows.append(row)
-        return rows
+        return [_model_row(job) for job in _saved_jobs() if job.dataset == dataset]
+
+
+def all_models(limit: int = 50) -> list[dict]:
+    """The newest runs from every dataset, for the home screen."""
+    with _lock:
+        current()
+        return [_model_row(job) for job in _saved_jobs()[:limit]]
 
 
 def delete_model(job_id: str) -> None:
@@ -310,6 +323,7 @@ def delete_model(job_id: str) -> None:
         job = stored(job_id)
         if job.status == "running":
             raise TrainingError(409, "Stop this model's training first.")
+        close_live(job.id)
         shutil.rmtree(_folder(job), ignore_errors=True)
         if _job is not None and _job.id == job.id:
             _job = None
@@ -411,7 +425,29 @@ def _review(job: Job) -> None:
         lines = [line for line in done.stderr.splitlines() if line.strip()]
         job.reviewError = lines[-1][:600] if lines else "The held-back images could not be checked."
         return
-    _summarise_review(job, json.loads(done.stdout.strip().splitlines()[-1]))
+    rows = json.loads(done.stdout.strip().splitlines()[-1])
+    _save_held_out(job, "category", [(Path(row["path"]).name, row["actual"], row["guess"]) for row in rows])
+    _summarise_review(job, rows)
+
+
+HELD_OUT_FILE = "held_out.json"
+
+
+def _save_held_out(job: Job, task: str, rows: list[tuple[str, object, object]]) -> None:
+    """Keeps each held-back example's answer and the model's guess, under an ID only.
+
+    Held-back examples are picked by fingerprint, so another model on this dataset was checked on
+    mostly the same ones. These files let two models be compared on exactly the examples they share.
+    """
+    data = {"task": task, "rows": {key: [actual, guess] for key, actual, guess in rows}}
+    (_folder(job) / HELD_OUT_FILE).write_text(json.dumps(data), encoding="utf-8")
+
+
+def held_out(job: Job) -> dict | None:
+    try:
+        return json.loads((_folder(job) / HELD_OUT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def _review_text(job: Job) -> None:
@@ -419,6 +455,16 @@ def _review_text(job: Job) -> None:
     rows = json.loads((_folder(job) / "data" / "review.json").read_text(encoding="utf-8"))
     for row in rows:
         row["path"] = hashlib.sha256(row.pop("text").encode()).hexdigest()[:32]
+    _save_held_out(job, "category", [(row["path"], row["actual"], row["guess"]) for row in rows])
+    _summarise_review(job, rows)
+
+
+def _review_files(job: Job) -> None:
+    """Reads what a sound train.py recorded. Clips are named by their content, so the name is the ID."""
+    rows = json.loads((_folder(job) / "data" / "review.json").read_text(encoding="utf-8"))
+    for row in rows:
+        row["path"] = row.pop("file")
+    _save_held_out(job, "category", [(row["path"], row["actual"], row["guess"]) for row in rows])
     _summarise_review(job, rows)
 
 
@@ -426,6 +472,8 @@ def _review_table(job: Job) -> None:
     """Keeps train.py's scores and column importance, which hold no rows of data."""
     metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
     job.metrics = metrics
+    held = json.loads((_folder(job) / "data" / "held_out.json").read_text(encoding="utf-8"))
+    _save_held_out(job, metrics["task"], [tuple(row) for row in held])
     if metrics["task"] == "category":
         job.review = {
             "total": metrics["total"], "correct": metrics["correct"], "categories": metrics["perClass"],
@@ -470,7 +518,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -492,7 +540,9 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
 
 def _require_idle(dataset: str) -> None:
     """Training needs the computer to itself, and a copy of data that isn't changing underneath it."""
-    from . import datasets, health  # imported here, because both import this module
+    from . import datasets, experiments, health  # imported here, because they import this module
+    if experiments.blocks():
+        raise TrainingError(409, experiments.blocks())
     if health.is_checking():
         raise TrainingError(409, "Wait for the label check to finish. Both need this computer's full attention.")
     if dataset != DEFAULT_DATASET:
@@ -576,7 +626,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table"):
+    for task in ("image", "text", "table", "sound"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -615,6 +665,7 @@ def shutdown() -> None:
     global _shutting_down
     _shutting_down = True
     stop_any()
+    close_live()
 
 
 def _mistake(job: Job, index: int) -> dict:
@@ -710,7 +761,135 @@ def predict(job_id: str, data: bytes) -> list[dict]:
     return json.loads(done.stdout.strip().splitlines()[-1])[0]["answers"]
 
 
-def bundle(job_id: str, target: Path, credits: str | None = None) -> Job:
+# ------------------------------------------------------------------ live predictions
+
+LIVE_IDLE_SECONDS = 120
+LIVE_ANSWER_SECONDS = 20
+LIVE_CHECK_SECONDS = 5
+# Runs inside the model's own folder. It loads the model once, then answers one image per line of
+# input, so a webcam can be asked several times a second instead of waiting for Python to start.
+
+
+class _LivePredictor:
+    def __init__(self, job: Job, script: str, unreadable: str):
+        import queue
+
+        self.job_id = job.id
+        self.unreadable = unreadable
+        self.lines: queue.Queue[str | None] = queue.Queue()
+        self.errors: collections.deque[str] = collections.deque(maxlen=20)
+        folder = _folder(job)
+        self.process = subprocess.Popen(
+            [sys.executable, "-I", "-u", "-c", script], cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": "2"},
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", bufsize=1,
+        )
+        self.used = time.time()
+        threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._read_errors, daemon=True).start()
+        if self._next(PREDICT_LIMIT_SECONDS) != "ready":
+            self.close()
+            raise TrainingError(500, self._problem("The model couldn't be loaded for live answers."))
+
+    def _read(self) -> None:
+        for line in self.process.stdout:
+            self.lines.put(line.strip())
+        self.lines.put(None)
+
+    def _read_errors(self) -> None:
+        for line in self.process.stderr:
+            if line.strip():
+                self.errors.append(line.strip())
+
+    def _problem(self, fallback: str) -> str:
+        return self.errors[-1][:600] if self.errors else fallback
+
+    def _next(self, timeout: float) -> str | None:
+        import queue
+
+        try:
+            return self.lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def ask(self, data: bytes, explain_it: bool = False) -> dict:
+        import base64
+
+        self.used = time.time()
+        try:
+            self.process.stdin.write(json.dumps({"data": base64.b64encode(data).decode(), "explain": explain_it}) + "\n")
+            self.process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            raise TrainingError(500, self._problem("The live model stopped. Try again.")) from None
+        line = self._next(LIVE_ANSWER_SECONDS)
+        if line is None:
+            raise TrainingError(504, "The model took too long to answer.")
+        reply = json.loads(line)
+        if "error" in reply:
+            raise TrainingError(422, self.unreadable)
+        return reply
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+    def close(self) -> None:
+        if self.process.poll() is None:
+            self.process.kill()
+        self.process.wait(10)
+
+
+_live: _LivePredictor | None = None
+_live_lock = threading.Lock()
+
+
+def predict_live(job_id: str, data: bytes, explain_it: bool = False) -> dict:
+    """Answers quickly for a webcam: one model stays loaded while it's being asked.
+
+    Returns {"answers", "heatmap"}, where the heatmap of where it looked is None unless asked for.
+    """
+    read_image(data)
+    job = stored(job_id)
+    if job.task != "image":
+        raise TrainingError(422, "This model doesn't read images.")
+    return ask_live(job, explain.LIVE_RUNNER, data, explain_it, "The model couldn't read this image.")
+
+
+def ask_live(job: Job, script: str, data: bytes, explain_it: bool, unreadable: str) -> dict:
+    """Asks the one model kept loaded, loading this one in its place first if needed."""
+    global _live
+    if job.status == "running" or not job.hasModel:
+        raise TrainingError(409, "This model has no saved file to answer with.")
+    with _live_lock:
+        if _live is not None and (_live.job_id != job.id or not _live.alive()):
+            _live.close()
+            _live = None
+        if _live is None:
+            _live = _LivePredictor(job, script, unreadable)
+            threading.Thread(target=_close_when_idle, args=(_live,), daemon=True).start()
+        return _live.ask(data, explain_it)
+
+
+def _close_when_idle(predictor: _LivePredictor) -> None:
+    global _live
+    while predictor.alive():
+        time.sleep(LIVE_CHECK_SECONDS)
+        with _live_lock:
+            if time.time() - predictor.used > LIVE_IDLE_SECONDS:
+                predictor.close()
+                if _live is predictor:
+                    _live = None
+                return
+
+
+def close_live(job_id: str | None = None) -> None:
+    """Stops the live model, for example before its folder is deleted."""
+    global _live
+    with _live_lock:
+        if _live is not None and (job_id is None or _live.job_id == job_id):
+            _live.close()
+            _live = None
+
+
+def bundle(job_id: str, target: Path, credits: str | None = None, card: str | None = None) -> Job:
     """Writes the project and its trained model, without the user's images, to a zip file."""
     import zipfile
 
@@ -729,4 +908,6 @@ def bundle(job_id: str, target: Path, credits: str | None = None) -> Job:
                 archive.write(path, f"{job.slug}/{path.relative_to(folder)}")
         if credits:
             archive.writestr(f"{job.slug}/DATA_SOURCES.md", credits)
+        if card:
+            archive.writestr(f"{job.slug}/MODEL_CARD.md", card)
     return job

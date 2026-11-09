@@ -210,11 +210,19 @@ _BANNER = """# =================================================================
 _IMAGE_COMMON = '''
 IMAGE_SIZE = @@SIZE@@
 CHANNELS = @@CHANNELS@@
+AUGMENT = @@AUGMENT@@  # vary training photos: random crops, flips and light
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
-def _image_transform():
-    steps = [transforms.Resize((IMAGE_SIZE, IMAGE_SIZE))]
+def _image_transform(augment=False):
+    if augment:
+        steps = [
+            transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.7, 1.0), ratio=(0.85, 1.18)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25),
+        ]
+    else:
+        steps = [transforms.Resize((IMAGE_SIZE, IMAGE_SIZE))]
     if CHANNELS == 1:
         steps.append(transforms.Grayscale(1))
     steps.append(transforms.ToTensor())@@NORMALISE@@
@@ -225,21 +233,31 @@ def _load_image(path, transform):
     return transform(Image.open(path).convert("RGB"))
 
 
+def _hash(name):
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+
+
 def _split(dataset):
-    """Holds back 20% of the images to check the model on data it never trained on."""
+    """Holds back 20% of the images to check the model on data it never trained on.
+
+    The images held back are picked by a fingerprint of their file name, not at random, so models
+    trained on the same images are checked on the same ones and can be compared fairly.
+    """
     if len(dataset) < 5:
         raise ValueError(f"Found only {len(dataset)} images. Add at least 5 before training.")
     val_size = max(1, len(dataset) // 5)
-    generator = torch.Generator().manual_seed(0)
-    return random_split(dataset, [len(dataset) - val_size, val_size], generator=generator)
+    paths = [sample[0] for sample in dataset.samples] if hasattr(dataset, "samples") else dataset.paths
+    order = sorted(range(len(paths)), key=lambda index: _hash(Path(paths[index]).name))
+    return Subset(dataset, sorted(order[val_size:])), Subset(dataset, sorted(order[:val_size]))
 '''
 
 _IMAGE_CLASSIFY = '''"""Loads your images. Edit the marked section, then run: python train.py"""
+import hashlib
 from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 
 from model import CLASS_NAMES
@@ -253,6 +271,8 @@ class ImageClassDataset(Dataset):
 
     def __init__(self):
         self.transform = _image_transform()
+        self.varied = _image_transform(augment=True)
+        self.augmented = set()  # the training photos, when AUGMENT is on
         self.samples = []
         root = Path(DATA_FOLDER)
         if not root.is_dir():
@@ -270,23 +290,26 @@ class ImageClassDataset(Dataset):
 
     def __getitem__(self, index):
         path, label = self.samples[index]
-        return _load_image(path, self.transform), label
+        return _load_image(path, self.varied if index in self.augmented else self.transform), label
 
 
 def load_datasets():
     dataset = ImageClassDataset()
     train, val = _split(dataset)
+    if AUGMENT:
+        dataset.augmented = set(train.indices)
     train.normalisation = None
     return train, val
 '''
 
 _IMAGE_NUMBER = '''"""Loads your images and their numbers. Edit the marked section, then run: python train.py"""
 import csv
+import hashlib
 from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 
 @@BANNER@@@@COMMON@@
@@ -324,11 +347,12 @@ def load_datasets():
 '''
 
 _IMAGE_REBUILD = '''"""Loads your normal images. Edit the marked section, then run: python train.py"""
+import hashlib
 from pathlib import Path
 
 import torch
 from PIL import Image
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 
 @@BANNER@@@@COMMON@@
@@ -475,7 +499,8 @@ def _data_py(analysis: Analysis) -> str:
             "\n    # The pretrained model expects images scaled this way.\n"
             "    steps.append(transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))"
         ) if pretrained else ""
-        common = _fill(_IMAGE_COMMON, SIZE=socket.output.height, CHANNELS=socket.output.channels, NORMALISE=normalise)
+        augment = bool(socket.params.get("augment", False)) and task == "classify"
+        common = _fill(_IMAGE_COMMON, SIZE=socket.output.height, CHANNELS=socket.output.channels, NORMALISE=normalise, AUGMENT=augment)
         if task == "classify":
             names = parse_names(head.params["classes"])
             banner = [

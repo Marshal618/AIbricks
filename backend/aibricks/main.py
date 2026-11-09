@@ -17,12 +17,13 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import catalogue, code_parser, codegen, datasets, graph as graphs, labelling, opendata, health, projects, runner, tables, textmodels, training, versions
+from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, experiments, system, tables, textmodels, training, versions, webapp
 
 
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
+    experiments._stop.set()  # an experiment ends as stopped, not failed
     training.shutdown()
 
 
@@ -192,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -238,6 +239,50 @@ async def predict(job_id: str, request: Request) -> dict:
         raise _raise(error) from None
 
 
+@app.post("/api/train/{job_id}/predict-live")
+async def predict_live(job_id: str, request: Request, explain: bool = False) -> dict:
+    """For webcam frames: keeps the model loaded between requests so answers come back quickly.
+
+    With explain=true, the reply also has a heatmap of where in the photo the model looked.
+    """
+    data = await _read_upload(request)
+    try:
+        reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return reply if explain else {"answers": reply["answers"]}
+
+
+@app.post("/api/train/{job_id}/explain")
+async def explain_image(job_id: str, request: Request) -> dict:
+    """The model's answers for a photo, and a heatmap of where it looked."""
+    data = await _read_upload(request)
+    try:
+        return await run_in_threadpool(training.predict_live, job_id, data, True)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+_APP_POLICY = (
+    "default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; "
+    "connect-src data: https: http:; style-src 'unsafe-inline'; img-src blob: data:; media-src blob: mediastream:; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+)
+
+
+@app.get("/api/train/{job_id}/app")
+def model_app(job_id: str, download: bool = False) -> Response:
+    """A web page that runs this photo model by itself, in any browser, with its own rules."""
+    try:
+        text, name = webapp.page(job_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    headers = {"Content-Security-Policy": _APP_POLICY, "Cache-Control": "no-store"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    return Response(text, media_type="text/html; charset=utf-8", headers=headers)
+
+
 @app.get("/api/train/{job_id}/mistakes/{index}")
 def mistake_image(job_id: str, index: int) -> FileResponse:
     try:
@@ -266,7 +311,8 @@ def download_trained(job_id: str) -> FileResponse:
     handle, path = tempfile.mkstemp(suffix=".zip")
     os.close(handle)
     try:
-        job = training.bundle(job_id, Path(path), versions.credits(training.stored(job_id)))
+        stored = training.stored(job_id)
+        job = training.bundle(job_id, Path(path), versions.credits(stored), cards.markdown(stored))
     except training.TrainingError as error:
         os.unlink(path)
         raise _raise(error) from None
@@ -575,6 +621,21 @@ def delete_version(dataset_id: str, number: int) -> dict:
 
 # ------------------------------------------------------------- models from a dataset
 
+@app.get("/api/models")
+def list_all_models(limit: int = Query(default=20, ge=1, le=50)) -> dict:
+    """The newest runs from every dataset, each with its dataset's name."""
+    names = {row["id"]: row["name"] for row in datasets.listing()}
+    rows = training.all_models(limit)
+    for row in rows:
+        row["datasetName"] = names.get(row["dataset"])
+    return {"models": rows}
+
+
+@app.get("/api/system")
+def system_info() -> dict:
+    return system.info()
+
+
 @app.get("/api/datasets/{dataset_id}/models")
 def list_dataset_models(dataset_id: str) -> dict:
     try:
@@ -582,6 +643,50 @@ def list_dataset_models(dataset_id: str) -> dict:
         return {"models": training.saved_models(dataset_id)}
     except training.TrainingError as error:
         raise _raise(error) from None
+
+
+class ExperimentRequest(BaseModel):
+    minutes: int = Field(ge=1, le=60)
+
+
+@app.post("/api/datasets/{dataset_id}/experiments")
+def start_experiment(dataset_id: str, request: ExperimentRequest) -> dict:
+    """Find a better model: tries several photo models on this dataset within a time limit."""
+    return {"experiment": _dataset_reply(experiments.start, dataset_id, request.minutes)}
+
+
+@app.get("/api/datasets/{dataset_id}/experiments")
+def latest_experiment(dataset_id: str) -> dict:
+    _dataset_reply(datasets._read, dataset_id)
+    return {"experiment": experiments.latest(dataset_id), "budgets": list(experiments.BUDGETS),
+            "changes": {key: {"label": label, "description": text} for key, (label, text) in experiments.CHANGES.items()}}
+
+
+@app.delete("/api/datasets/{dataset_id}/experiments")
+def stop_experiment(dataset_id: str) -> dict:
+    return {"experiment": _dataset_reply(experiments.stop, dataset_id)}
+
+
+@app.get("/api/datasets/{dataset_id}/compare")
+def compare_models(
+    dataset_id: str, first: str = Query(min_length=1, max_length=40), second: str = Query(min_length=1, max_length=40),
+) -> dict:
+    """Compares two models on the held-back examples they share."""
+    try:
+        datasets._read(dataset_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return _dataset_reply(comparing.compare, dataset_id, first, second)
+
+
+@app.get("/api/models/{job_id}/card")
+def model_card(job_id: str) -> dict:
+    return _dataset_reply(cards.card, job_id)
+
+
+@app.put("/api/models/{job_id}/card")
+def update_model_card(job_id: str, notes: cards.CardNotes) -> dict:
+    return _dataset_reply(cards.save_notes, job_id, notes)
 
 
 @app.delete("/api/models/{job_id}")
@@ -611,9 +716,70 @@ def try_text_model(job_id: str, request: TextToTry) -> dict:
         raise _raise(error) from None
 
 
+@app.post("/api/models/{job_id}/explain")
+def explain_text_model(job_id: str, request: TextToTry) -> dict:
+    """The model's answers, and how much each word pushed it toward the top one."""
+    try:
+        return explaining.explain_text(job_id, request.text)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
 @app.get("/api/models/{job_id}/mistakes")
 def text_model_mistakes(job_id: str) -> dict:
     return _dataset_reply(textmodels.mistakes, job_id)
+
+
+# --------------------------------------------------------------------- sound
+
+@app.post("/api/datasets/{dataset_id}/sounds")
+async def add_sound(dataset_id: str, request: Request, category: str = Query(min_length=1, max_length=200)) -> dict:
+    """Adds a WAV recording to a category, cut into 1-second clips."""
+    data = await _read_upload(request, sounds.MAX_SOUND_BYTES)
+    try:
+        return await run_in_threadpool(sounds.add_recording, category, data, dataset_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/datasets/{dataset_id}/sounds")
+def list_sounds(dataset_id: str, category: str = Query(min_length=1, max_length=200)) -> dict:
+    return _dataset_reply(sounds.clips, dataset_id, category)
+
+
+@app.get("/api/datasets/{dataset_id}/sounds/{clip_id}")
+def sound_file(dataset_id: str, clip_id: str, category: str = Query(min_length=1, max_length=200)) -> FileResponse:
+    path = _dataset_reply(sounds.clip_file, dataset_id, category, clip_id)
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/datasets/{dataset_id}/sounds/{clip_id}")
+def remove_sound(dataset_id: str, clip_id: str, category: str = Query(min_length=1, max_length=200)) -> dict:
+    _dataset_reply(sounds.remove_clip, dataset_id, category, clip_id)
+    return {"ok": True}
+
+
+@app.post("/api/datasets/{dataset_id}/train-sound", dependencies=[Depends(_needs_json)])
+def train_sound_model(dataset_id: str) -> dict:
+    try:
+        return {"job": training.public(sounds.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/sound-mistakes")
+def sound_mistakes(job_id: str) -> dict:
+    return _dataset_reply(sounds.mistakes, job_id)
+
+
+@app.post("/api/models/{job_id}/listen")
+async def listen(job_id: str, request: Request, explain: bool = False) -> dict:
+    """A sound model's answers for a WAV recording, its spectrogram, and with explain=true where it listened."""
+    data = await _read_upload(request, sounds.MAX_SOUND_BYTES)
+    try:
+        return await run_in_threadpool(sounds.listen, job_id, data, explain)
+    except training.TrainingError as error:
+        raise _raise(error) from None
 
 
 # -------------------------------------------------------------- spreadsheet models

@@ -116,7 +116,7 @@ export function DataHealthTab({ dataset, beginner, onChanged }: { dataset: Datas
       {(health.conflicts?.length ?? 0) > 0 && (
         <section className="card">
           <h2>Filed under more than one category</h2>
-          <p className="muted small">{dataset.kind === "image" ? "The same photo is in two categories, which teaches the model two answers for one picture." : "The same text, apart from capitals and spaces, has different labels."}</p>
+          <p className="muted small">{dataset.kind === "image" ? "The same photo is in two categories, which teaches the model two answers for one picture." : dataset.kind === "sound" ? "The same clip is in two categories, which teaches the model two answers for one sound." : "The same text, apart from capitals and spaces, has different labels."}</p>
           <ul className="health-list">
             {health.conflicts?.map((conflict) => (
               <li key={conflict.ids.join()}>
@@ -135,7 +135,13 @@ export function DataHealthTab({ dataset, beginner, onChanged }: { dataset: Datas
         </section>
       )}
 
-      <section className="card">
+      {dataset.kind === "sound" && (
+        <section className="card">
+          <h2>Label check</h2>
+          <p className="muted small">The label check isn't available for sound yet. Listen to your clips on the Label tab, and to the mistakes a trained model makes on the Models tab, to find wrong ones.</p>
+        </section>
+      )}
+      {dataset.kind !== "sound" && <section className="card">
         <div className="card-head">
           <h2>Label check</h2>
           <button className="button button-small button-primary" disabled={running || level === 0} onClick={() => void start()}>{running ? "Checking…" : check ? "Check again" : "Check labels"}</button>
@@ -185,7 +191,7 @@ export function DataHealthTab({ dataset, beginner, onChanged }: { dataset: Datas
             ))}
           </ul>
         )}
-      </section>
+      </section>}
 
       {check && pairs.length > 0 && (
         <section className="card">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import * as api from "./api";
 import { FindData } from "./FindData";
+import { WebcamCapture } from "./Webcam";
 import type { DatasetSummary, ImageQueue, LabelItem, TextQueue } from "./types";
 
 interface Props {
@@ -265,6 +266,10 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
     onChanged();
   };
 
+  const addedFromCamera = useCallback((category: string) => {
+    setCounts((current) => ({ ...current, [category]: (current[category] ?? 0) + 1 }));
+  }, []);
+
   const uploading = upload !== null && upload.done < upload.total;
   const sameCategories = queue?.modelCategories !== null && queue?.modelCategories !== undefined
     && JSON.stringify(queue.modelCategories) === JSON.stringify([...categories].sort());
@@ -274,10 +279,12 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
+      <h2 className="section-title">Add examples</h2>
+      <WebcamCapture datasetId={datasetId} categories={categories} onAdded={addedFromCamera} onDone={onChanged} />
       <FindData datasetId={datasetId} kind="image" categories={categories} onImported={() => { void load(); onChanged(); }} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">
-          <h2>Unsorted images</h2>
+          <h2>Add photos from your computer</h2>
           <div className="label-buttons">
             {(queue?.total ?? 0) > 0 && <button className="button button-small button-quiet" disabled={uploading} onClick={() => void clearAll()}>Remove all</button>}
             <button className="button button-small" disabled={uploading} onClick={() => folderInput.current?.click()}>Choose a folder</button>
@@ -286,7 +293,7 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
           <input ref={filesInput} className="visually-hidden" type="file" multiple accept="image/jpeg,image/png,image/bmp,image/webp" aria-label="Add unsorted images" tabIndex={-1} onChange={(event) => void addFiles(event)} />
           <input ref={folderInput} className="visually-hidden" type="file" aria-label="Choose a folder of unsorted images" tabIndex={-1} onChange={(event) => void addFiles(event)} {...{ webkitdirectory: "" }} />
         </div>
-        <p className="muted small">Images are copied to this computer's AI Bricks folder and aren't sent anywhere. Each label moves the image into that category, ready for training.</p>
+        <p className="muted small">They wait below until you sort them into a category. Nothing is uploaded anywhere.</p>
         {upload && uploading && (
           <div className="field-note" role="status">
             <progress className="train-progress" max={upload.total} value={upload.done} aria-label="Images copied" />
@@ -306,7 +313,7 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
         )}
       </section>
 
-      <section className="card label-assist">
+      {(queue?.total ?? 0) > 0 && <section className="card label-assist">
         <div className="card-head">
           <h2>Let the model help</h2>
           {sameCategories && (queue?.total ?? 0) > 0 && (
@@ -324,8 +331,9 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
         </p>
         {queue?.suggestError && <p className="small tone-bad field-note">{queue.suggestError}</p>}
         {!sameCategories && smallest >= 20 && categories.length > 0 && <button className="button button-small field-note" onClick={onBuild}>Build a model with this data</button>}
-      </section>
+      </section>}
 
+      <h2 className="section-title">Sort them</h2>
       {queue && categories.length === 0 && (
         <div className="notice">Add at least one category above, then you can start labelling.</div>
       )}
@@ -420,6 +428,7 @@ function TextLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
+      <h2 className="section-title">Add examples</h2>
       <FindData datasetId={datasetId} kind="text" categories={categories} onImported={() => { void load(); onChanged(); }} onUseCategories={onUseCategories} />
       <section className="card">
         <div className="card-head">
@@ -434,6 +443,7 @@ function TextLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
         {message && <p className="muted small field-note" role="status">{message}</p>}
       </section>
 
+      <h2 className="section-title">Sort them</h2>
       {queue && categories.length === 0 && (
         <div className="notice">Add at least one category above, then you can start labelling.</div>
       )}

@@ -8,7 +8,7 @@ interface Props {
   onBlank: () => void;
   onCancel: () => void;
   /** When building for a dataset, only templates for its kind of data are shown. */
-  forDataset?: { name: string; kind: "image" | "text" | "table" } | null;
+  forDataset?: { name: string; kind: "image" | "text" | "table" | "sound" } | null;
 }
 
 const WRITES_TEXT = new Set(["generate", "transformer_decoder", "decoder_only", "decoder_memory"]);

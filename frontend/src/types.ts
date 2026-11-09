@@ -82,7 +82,7 @@ export interface Analysis {
 export interface DatasetSummary {
   id: string;
   name: string;
-  kind: "image" | "text" | "table";
+  kind: "image" | "text" | "table" | "sound";
   categories: string[];
   counts: Record<string, number>;
   labelled: number;
@@ -194,13 +194,14 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number } | null;
-  task: "image" | "text" | "table";
+  task: "image" | "text" | "table" | "sound";
   metrics: TableMetrics | null;
   device: string;
   stage: "training" | "reviewing";
   stepsDone: number;
   stepsTotal: number;
   error: string | null;
+  checkup?: CheckupFinding[];
 }
 
 export interface OpenDataResult {
@@ -296,6 +297,7 @@ export interface TrainingJob {
   datasetVersion: number | null;
   review: TrainingReview | null;
   reviewError: string | null;
+  checkup?: CheckupFinding[];
 }
 
 export interface TrainingMistake {
@@ -411,4 +413,149 @@ export interface DataHealth {
   } | null;
   table?: { rows: number; columns: number; repeatedRows: number; blankShare: number; constantColumns: string[] } | null;
   job: { status: "running" | "finished" | "failed"; stepsDone: number; stepsTotal: number; error: string | null; count: number } | null;
+}
+
+export interface ModelComparison {
+  first: { id: string; name: string; version: number | null; startedAt: number };
+  second: { id: string; name: string; version: number | null; startedAt: number };
+  task: "category" | "number";
+  shared: number;
+  verdict: "too-few" | "same" | "first" | "second" | "unclear";
+  summary: string;
+  firstScore?: number;
+  secondScore?: number;
+  onlyFirst?: number;
+  onlySecond?: number;
+  bothRight?: number;
+  neitherRight?: number;
+  ties?: number;
+  chanceOfLuck?: number;
+}
+
+export interface ModelCardNotes {
+  intendedUse: string;
+  notFor: string;
+}
+
+export interface ModelCard {
+  jobId: string;
+  notes: ModelCardNotes;
+  sections: { title: string; lines: string[]; editable?: boolean }[];
+  markdown: string;
+}
+
+export interface Heatmap {
+  width: number;
+  height: number;
+  /** Row by row, 0 to 1, where 1 is where the model looked most. */
+  values: number[];
+  method: "gradcam" | "gradients";
+  category: string;
+}
+
+export interface ImageExplanation {
+  answers: PredictAnswer[];
+  heatmap: Heatmap;
+}
+
+export interface TextExplanation {
+  answers: PredictAnswer[];
+  category: string;
+  /** How much the top answer's chance falls when this word is removed. Negative words pushed against it. */
+  words: { start: number; end: number; weight: number }[];
+  wordCount: number;
+}
+
+export interface WorkspaceModel extends SavedModel {
+  dataset: string;
+  datasetName: string | null;
+  finishedAt: number | null;
+}
+
+export interface SystemInfo {
+  device: "cuda" | "mps" | "cpu" | "unknown";
+  deviceLabel: string;
+  torch: string | null;
+  python: string;
+  platform: string;
+  cpus: number;
+  storage: { path: string; bytes: number; freeBytes: number; parts: { data: number; models: number; projects: number; downloads: number } };
+}
+
+export interface Grid {
+  width: number;
+  height: number;
+  /** Row by row from the top, 0 to 1. */
+  values: number[];
+}
+
+export interface SoundAnswer {
+  answers: PredictAnswer[];
+  /** The first second of the recording, high pitches at the top. */
+  spectrogram: Grid;
+  heatmap: Heatmap | null;
+  clips: number;
+}
+
+export interface SoundMistake {
+  index: number;
+  actual: string;
+  guess: string;
+  chance: number;
+  file: string;
+  movedTo?: string | null;
+  removed?: boolean;
+}
+
+export type FixKind = "augment" | "slower" | "longer" | "pretrained" | "more_photos" | "experiment";
+
+export interface CheckupFinding {
+  kind: "memorising" | "unstable" | "too_simple" | "still_learning" | "healthy";
+  title: string;
+  detail: string;
+  fixes: FixKind[];
+}
+
+export interface ExperimentOption {
+  key: string;
+  label: string;
+  changes: string[];
+  round: number;
+  epochs: number;
+  jobId: string;
+  seconds: number;
+  accuracy: number | null;
+  correct: number | null;
+  total: number | null;
+  deleted?: boolean;
+  graph: GraphPayload;
+}
+
+export interface ExperimentEffect {
+  key: string;
+  label: string;
+  description: string;
+  points: number;
+  meaning: "helped" | "hurt" | "no clear difference" | "too few photos to tell";
+  chanceOfLuck: number | null;
+  shared: number | null;
+}
+
+export interface Experiment {
+  id: string;
+  dataset: string;
+  status: "running" | "finished" | "stopped" | "failed";
+  minutes: number;
+  startedAt: number;
+  finishedAt: number | null;
+  round: number;
+  current: string | null;
+  currentLabel?: string;
+  progress?: { epoch: number; epochs: number } | null;
+  options: ExperimentOption[];
+  effects: ExperimentEffect[];
+  winner: string | null;
+  verdict: { against: string; result: string; chanceOfLuck: number | null } | null;
+  error: string | null;
+  skipped: string[];
 }

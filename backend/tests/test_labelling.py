@@ -4,7 +4,7 @@ import io
 import time
 
 from fastapi.testclient import TestClient
-from test_training import BINARY, BLUE, RED, build, fill, mark_tested, picture, upload, wait_for_end, workspace  # noqa: F401
+from test_training import BINARY, BLUE, RED, build, fill, held_back_blues, mark_tested, picture, upload, wait_for_end, workspace  # noqa: F401
 
 from aibricks import labelling, training
 from aibricks.main import app
@@ -139,9 +139,9 @@ def test_bad_ids_and_cross_site_requests_are_refused(workspace):  # noqa: F811
 
 
 def test_fixing_a_mistake_moves_removes_and_restores():
-    fill(10)
-    for seed in range(100, 110):
-        upload("Red", picture(BLUE, seed))
+    fill(20)
+    for data in held_back_blues(20):
+        upload("Red", data)
     graph = build()
     mark_tested(graph)
     client.post("/api/train", json=graph)
