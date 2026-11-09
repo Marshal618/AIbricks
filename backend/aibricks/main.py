@@ -17,12 +17,13 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, system, tables, textmodels, training, versions, webapp
+from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, experiments, system, tables, textmodels, training, versions, webapp
 
 
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
+    experiments._stop.set()  # an experiment ends as stopped, not failed
     training.shutdown()
 
 
@@ -642,6 +643,28 @@ def list_dataset_models(dataset_id: str) -> dict:
         return {"models": training.saved_models(dataset_id)}
     except training.TrainingError as error:
         raise _raise(error) from None
+
+
+class ExperimentRequest(BaseModel):
+    minutes: int = Field(ge=1, le=60)
+
+
+@app.post("/api/datasets/{dataset_id}/experiments")
+def start_experiment(dataset_id: str, request: ExperimentRequest) -> dict:
+    """Find a better model: tries several photo models on this dataset within a time limit."""
+    return {"experiment": _dataset_reply(experiments.start, dataset_id, request.minutes)}
+
+
+@app.get("/api/datasets/{dataset_id}/experiments")
+def latest_experiment(dataset_id: str) -> dict:
+    _dataset_reply(datasets._read, dataset_id)
+    return {"experiment": experiments.latest(dataset_id), "budgets": list(experiments.BUDGETS),
+            "changes": {key: {"label": label, "description": text} for key, (label, text) in experiments.CHANGES.items()}}
+
+
+@app.delete("/api/datasets/{dataset_id}/experiments")
+def stop_experiment(dataset_id: str) -> dict:
+    return {"experiment": _dataset_reply(experiments.stop, dataset_id)}
 
 
 @app.get("/api/datasets/{dataset_id}/compare")

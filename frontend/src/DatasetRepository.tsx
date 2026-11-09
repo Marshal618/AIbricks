@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
 import { ExplainableText } from "./Explain";
+import { FindBetterModel } from "./Experiments";
 import { ModelApp } from "./ModelApp";
+import { TrainingCheck } from "./TrainingCheck";
+import { Why } from "./Ui";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { CompareModels, ModelCardView } from "./ModelInsights";
 import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
-import type { DatasetPreview, DatasetSummary, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
+import type { DatasetPreview, DatasetSummary, GraphPayload, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
 
@@ -407,7 +410,9 @@ function TextMistakes({ model, dataset, beginner, onChanged }: { model: SavedMod
   );
 }
 
-export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void }) {
+export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDesign }: {
+  dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void; onOpenDesign: (graph: GraphPayload) => void;
+}) {
   const [models, setModels] = useState<SavedModel[] | null>(null);
   const [known, setKnown] = useState<Set<number>>(new Set());
   const [problem, setProblem] = useState<string | null>(null);
@@ -485,36 +490,51 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
+      <h2 className="section-title">Train</h2>
+      {dataset.kind === "image" && (
+        <div className="train-choices">
+          <FindBetterModel dataset={dataset} beginner={beginner} busyElsewhere={busyElsewhere} onOpenDesign={onOpenDesign} onFinished={() => { void load(); onChanged(); }} />
+          <section className="card">
+            <h2>Design your own</h2>
+            <p className="muted small">Connect blocks yourself in the Model builder, test them, then train.</p>
+            <button className="button button-small field-note" disabled={!dataset.labelled} onClick={onBuild}>Open the Model builder</button>
+          </section>
+        </div>
+      )}
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
+      {(newestTable || newestPhoto || newestSound || newestText) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
       {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
       {newestPhoto && (
         <section className="card">
-          <h2>Try the newest model</h2>
-          <p className="muted small">{`${newestPhoto.projectName}, trained on data v${newestPhoto.datasetVersion ?? "?"}. Hold things up to the camera and watch its guesses change.`}</p>
+          <h2>Try it</h2>
+          <p className="muted small">{`${newestPhoto.projectName} · ${score(newestPhoto)} on held-back photos · data v${newestPhoto.datasetVersion ?? "?"}`}</p>
           <WebcamTry key={newestPhoto.id} jobId={newestPhoto.id} beginner={beginner} />
           <ModelApp jobId={newestPhoto.id} beginner={beginner} />
         </section>
+      )}
+      {newestPhoto?.checkup && (
+        <TrainingCheck
+          findings={newestPhoto.checkup}
+          available={["experiment"]}
+          onFix={() => document.querySelector(".find-better")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+        />
       )}
       {newestSound && <SoundTry key={newestSound.id} model={newestSound} beginner={beginner} />}
       {newestSound && <SoundMistakes key={`m${newestSound.id}`} model={newestSound} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       {newestText && <TryText key={newestText.id} model={newestText} beginner={beginner} />}
       {newestText && <TextMistakes key={`m${newestText.id}`} model={newestText} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
+      <h2 className="section-title">All models</h2>
       <section className="card">
         <h2>Models trained on this data</h2>
-        <p className="muted small">
+        <p className="muted small">The score is how often it was right on held-back {dataset.kind === "table" ? "rows" : "examples"} it never learned from.</p>
+        <Why>
           {beginner
-            ? "Each model shows which version of the data trained it and how often it was right on held-back examples. Scores from small datasets are rough. To see if one model is really better, compare them below."
-            : "Score is accuracy on each run's held-back split. Splits are chosen by content fingerprint, so runs share most held-back examples; use Compare for a paired test. The 10 newest model files are kept."}
-        </p>
-        {models?.length === 0 && dataset.kind === "image" && (
-          <div className="notice field-note">
-            <span>No models yet.</span>
-            <button className="button button-small" disabled={!dataset.labelled} onClick={onBuild}>Build a model with this data</button>
-          </div>
-        )}
-        {models?.length === 0 && dataset.kind !== "image" && <p className="muted small field-note">No models yet.</p>}
+            ? "Each model also shows which version of the data trained it. Scores from small datasets are rough, so to see if one model is really better than another, compare them below."
+            : "Splits are chosen by content fingerprint, so runs share most held-back examples; use Compare for a paired test. The 10 newest model files are kept."}
+        </Why>
+        {models?.length === 0 && <p className="muted small field-note">No models yet. Train one above.</p>}
         <ul className="project-list">
           {models?.map((model) => (
             <li key={model.id}>

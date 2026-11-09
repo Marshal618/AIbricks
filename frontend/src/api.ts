@@ -1,4 +1,4 @@
-import type { SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { Experiment, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -433,3 +433,15 @@ export async function listen(job: string, recording: Blob, explain: boolean): Pr
 export const fetchSoundMistakes = (job: string): Promise<{ mistakes: SoundMistake[]; total: number }> => getJson(`/api/models/${job}/sound-mistakes`);
 
 export const modelAppUrl = (id: string, download = false) => `/api/train/${id}/app${download ? "?download=true" : ""}`;
+
+export const fetchExperiment = (dataset: string): Promise<{ experiment: Experiment | null; budgets: number[]; changes: Record<string, { label: string; description: string }> }> =>
+  getJson(`/api/datasets/${dataset}/experiments`);
+
+export async function startExperiment(dataset: string, minutes: number): Promise<Experiment> {
+  return (await sendJson(`/api/datasets/${dataset}/experiments`, { minutes })).experiment;
+}
+
+export async function stopExperiment(dataset: string) {
+  const response = await fetch(`/api/datasets/${dataset}/experiments`, { method: "DELETE" });
+  if (!response.ok) throw new Error(await errorMessage(response));
+}

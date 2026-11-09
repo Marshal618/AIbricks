@@ -201,6 +201,7 @@ export interface SavedModel {
   stepsDone: number;
   stepsTotal: number;
   error: string | null;
+  checkup?: CheckupFinding[];
 }
 
 export interface OpenDataResult {
@@ -296,6 +297,7 @@ export interface TrainingJob {
   datasetVersion: number | null;
   review: TrainingReview | null;
   reviewError: string | null;
+  checkup?: CheckupFinding[];
 }
 
 export interface TrainingMistake {
@@ -503,4 +505,57 @@ export interface SoundMistake {
   file: string;
   movedTo?: string | null;
   removed?: boolean;
+}
+
+export type FixKind = "augment" | "slower" | "longer" | "pretrained" | "more_photos" | "experiment";
+
+export interface CheckupFinding {
+  kind: "memorising" | "unstable" | "too_simple" | "still_learning" | "healthy";
+  title: string;
+  detail: string;
+  fixes: FixKind[];
+}
+
+export interface ExperimentOption {
+  key: string;
+  label: string;
+  changes: string[];
+  round: number;
+  epochs: number;
+  jobId: string;
+  seconds: number;
+  accuracy: number | null;
+  correct: number | null;
+  total: number | null;
+  deleted?: boolean;
+  graph: GraphPayload;
+}
+
+export interface ExperimentEffect {
+  key: string;
+  label: string;
+  description: string;
+  points: number;
+  meaning: "helped" | "hurt" | "no clear difference" | "too few photos to tell";
+  chanceOfLuck: number | null;
+  shared: number | null;
+}
+
+export interface Experiment {
+  id: string;
+  dataset: string;
+  status: "running" | "finished" | "stopped" | "failed";
+  minutes: number;
+  startedAt: number;
+  finishedAt: number | null;
+  round: number;
+  current: string | null;
+  currentLabel?: string;
+  progress?: { epoch: number; epochs: number } | null;
+  options: ExperimentOption[];
+  effects: ExperimentEffect[];
+  winner: string | null;
+  verdict: { against: string; result: string; chanceOfLuck: number | null } | null;
+  error: string | null;
+  skipped: string[];
 }

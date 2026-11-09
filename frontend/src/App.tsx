@@ -20,7 +20,7 @@ import { ProjectsDialog } from "./ProjectsDialog";
 import { PortShape } from "./PortGlyph";
 import { EMPTY_TEST, TestPage, type TestState } from "./TestPage";
 import { TrainPage } from "./TrainPage";
-import type { Analysis, Brick, BrickNodeType, Catalogue, DatasetSummary, GraphPayload, Kit, Mode, ParamValue, ParseReply, ProjectData, TrainingOverride } from "./types";
+import type { Analysis, Brick, BrickNodeType, Catalogue, DatasetSummary, FixKind, GraphPayload, Kit, Mode, ParamValue, ParseReply, ProjectData, TrainingOverride } from "./types";
 
 const nodeTypes = { brick: BrickNode };
 const STORAGE_KEY = "ai-bricks-build-v1";
@@ -41,12 +41,13 @@ interface Saved {
   datasetId?: string | null;
 }
 
-type Screen = { name: "home" } | { name: "data"; dataset: string | null; tab?: "models" } | { name: "build" };
+type DatasetTab = "models" | "label";
+type Screen = { name: "home" } | { name: "data"; dataset: string | null; tab?: DatasetTab } | { name: "build" };
 
 function screenFromHash(): Screen {
   const parts = window.location.hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "build") return { name: "build" };
-  if (parts[0] === "data") return { name: "data", dataset: parts[1] || null, tab: parts[1] && parts[2] === "models" ? "models" : undefined };
+  if (parts[0] === "data") return { name: "data", dataset: parts[1] || null, tab: parts[1] && (parts[2] === "models" || parts[2] === "label") ? parts[2] : undefined };
   return { name: "home" };
 }
 
@@ -472,6 +473,23 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
     setShowWelcome(true);
   }, [goTo]);
 
+  /** Applies a training check's fix to the open design, then goes to the test, since the design changed. */
+  const applyFix = useCallback((fix: FixKind) => {
+    if (fix === "augment") {
+      setNodes((current) => current.map((node) => node.data.brickId === "image_folder"
+        ? { ...node, data: { ...node.data, params: { ...node.data.params, augment: true } } } : node));
+    } else if (fix === "slower" || fix === "longer") {
+      const dial = { ...catalogue.training[training], ...(trainingOverride ?? {}) };
+      const epochs = Number(dial.epochs), rate = Number(dial.learning_rate), batch = Number(dial.batch_size);
+      setTrainingOverride(fix === "slower"
+        ? { epochs, batch_size: batch, learning_rate: Number((rate / 3).toPrecision(2)) }
+        : { epochs: Math.min(10000, epochs * 2), batch_size: batch, learning_rate: rate });
+    } else {
+      return;
+    }
+    setPage("test");
+  }, [catalogue, training, trainingOverride]);
+
   const buildWithDataset = useCallback((dataset: DatasetSummary) => {
     setPendingDataset(dataset);
     newModel();
@@ -507,6 +525,17 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   }, [projectData, projectName]);
 
   /** Opens a saved file as a new project. Returns why it couldn't, if it couldn't. */
+  /** Opens a design made elsewhere, such as an experiment's winner, as a new project. */
+  const openDesign = useCallback((graph: GraphPayload, dataset: string) => {
+    openProject(makeId(), {
+      projectName: graph.projectName, training: graph.training, trainingOverride: graph.trainingOverride, kitId: null, datasetId: dataset,
+      nodes: graph.nodes.map((node, index) => ({ id: node.id, type: "brick" as const, position: { x: 0, y: index * 140 }, data: { brickId: node.type, params: node.params } })),
+      edges: graph.edges.map((edge, index) => ({ id: `e-${edge.source}-${edge.target}-${index}`, source: edge.source, target: edge.target, targetHandle: edge.targetHandle })),
+    });
+    setPage("design");
+    setTidyTick((value) => value + 1);
+  }, [openProject]);
+
   const openProjectFile = useCallback((file: unknown): string | null => {
     const data = file as Partial<ProjectData> & { format?: string };
     if (data?.format !== PROJECT_FILE_FORMAT || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
@@ -741,7 +770,7 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
         )}
         {screen.name === "data" && (
           <div className="page">
-            <DataScreen mode={mode} datasetId={screen.dataset} tab={screen.tab} onOpen={(id) => goTo({ name: "data", dataset: id })} onBuild={buildWithDataset} />
+            <DataScreen mode={mode} datasetId={screen.dataset} tab={screen.tab} onOpen={(id) => goTo({ name: "data", dataset: id })} onBuild={buildWithDataset} onOpenDesign={openDesign} />
           </div>
         )}
         {screen.name === "build" && (<>
@@ -859,6 +888,8 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
               datasetId={datasetId}
               onDatasetChange={setDatasetId}
               onOpenData={(id) => goTo({ name: "data", dataset: id })}
+              onOpenDatasetTab={(id, tab) => goTo({ name: "data", dataset: id, tab })}
+              onApplyFix={applyFix}
               onUseCategories={useCategories}
             />
           </div>

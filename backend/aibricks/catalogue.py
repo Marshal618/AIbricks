@@ -92,6 +92,9 @@ _BRICKS = [
     Brick("image_folder", "Image folder", "socket", "Folder of images, loaded and resized for the model.", output=IMAGE, params=(
         Param("image_size", "Image size (pixels)", "int", 64, "Every image is resized to this square size.", 16, 512),
         Param("channels", "Colour channels", "choice", 3, "3 for colour, 1 for greyscale.", choices=(1, 3)),
+        Param("augment", "Vary training photos", "bool", False,
+              "Randomly crops, flips and changes the light of training photos, so the model learns the object, not one exact picture. "
+              "Held-back photos are never changed. Leave it off if left and right matter, as with arrows or writing."),
     )),
     Brick("time_series", "Time series", "socket", "CSV table of time-ordered measurements.", output=SERIES, params=(
         Param("columns", "Measurement columns", "names", "value", "Comma-separated column names in your CSV file.", max_items=256),
@@ -375,7 +378,7 @@ WHEN_TO_USE = {
     "detect_anomalies": "Use this to flag anything that looks different from normal.",
     "generate": "Use this to write new text in the style of your training text.",
 }
-BASIC_PARAMS = {"image_size", "channels", "columns", "sequence_length", "classes", "horizon", "max_length", "steps"}
+BASIC_PARAMS = {"image_size", "channels", "augment", "columns", "sequence_length", "classes", "horizon", "max_length", "steps"}
 GOALS = {
     "defect_detector": "Sort photos into categories",
     "energy_forecaster": "Predict future values from past measurements",

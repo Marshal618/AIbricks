@@ -63,12 +63,13 @@ The percentage shown is the share of labels that passed the check, not a measure
 
 ## Dataset pages, versions and models
 
-Each dataset has four tabs:
+Each dataset page shows its next step at the top, as one sentence and one button. The tabs are numbered in the order you use them:
 
-- **Overview** has its description, licence, data sources and a preview of each category.
-- **Label** is where you add categories and examples.
-- **Versions** saves your data and labels so you can compare or restore them. Restoring saves any unsaved work as a new version first.
-- **Models** lists what was trained on this data, with the data version and score of each, and downloads for the newest 10.
+1. **Add data** is where you name your categories and add and sort examples.
+2. **Check** gives the data a level and runs the label check.
+3. **Train** trains models and lists them, with the data version and score of each, and downloads for the newest 10.
+
+Two more tabs hold reference information: **About** has the description, licence, data sources and a preview of each category, and **History** saves versions of your data and labels so you can compare or restore them. Restoring saves any unsaved work as a new version first.
 
 Training saves a version automatically when the data has changed, then trains on a frozen copy of it.
 
@@ -95,6 +96,18 @@ Every run holds back about 20% of the data to check the model on. The held-back 
 **Compare two models** on the Models tab checks them only on the examples both held back, which neither learned from. It counts the examples one got right and the other missed, and uses McNemar's exact test (Dietterich, 1998) to say whether the gap is likely to be luck. Models that predict numbers are compared by which was closer on each row. Models trained before this feature was added need training again to be compared.
 
 **Card** shows a model card for any finished model, with sections from Mitchell et al. (2019): details, intended use, training data, how it was checked, results with a likely range for the accuracy, and limitations worked out from the results, such as weak categories, uneven data or a small check. You write the intended use, and downloads include the card as `MODEL_CARD.md`.
+
+## Find a better model
+
+On a photo dataset's **Train** tab, **Find a better model** tries several models within the time you choose and keeps the best. Round 1 trains a simple starting point and four versions that each change one thing: varying the training photos, a wider model, starting from a pretrained ResNet-18, or learning more slowly. They all get the same short training and are checked on the same held-back photos, so it can show what each change did, using McNemar's test to separate real differences from luck. Round 2 trains the best two, and a mix of the changes that helped, for three times as long. This is successive halving, the idea behind ASHA (Li et al., 2020).
+
+Only the winner is kept, as a normal model. **Open its blocks** opens it in the Model builder, so you can see exactly what it is and change it. With fewer than 10 held-back photos it can't tell real differences from luck, and it says so.
+
+**Vary training photos** is also a setting on the Image folder block. It randomly crops, flips and changes the lighting of training photos, never the held-back ones. Leave it off if left and right matter, as with arrows or writing.
+
+## Training check
+
+After a photo model trains, the **Training check** reads its loss chart and names what it sees in plain words: memorising the training photos, too simple to learn, unstable steps, still improving when it stopped, or healthy. Each finding offers fixes. On the Train step of the Model builder, **Vary training photos**, **Learn more slowly** and **Train for longer** change your design and take you to the test.
 
 ## Turn a photo model into an app
 
@@ -174,6 +187,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/projects.py` stores saved projects as JSON files.
 - `backend/aibricks/runner.py` runs the test in a separate, time-limited process.
 - `backend/aibricks/training.py` stores your images and runs training and predictions.
+- `backend/aibricks/experiments.py` runs Find a better model, and `checkup.py` makes the training check.
 - `backend/aibricks/sounds.py` stores sound clips and trains the sound sorter.
 - `backend/aibricks/explain.py` makes the heatmaps and word weights that show where a model looked.
 - `backend/aibricks/system.py` reports the training device and workspace size for the home screen.

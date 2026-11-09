@@ -4,8 +4,9 @@ import { useEditor } from "./context";
 import { LossChart } from "./LossChart";
 import { ExplainablePhoto } from "./Explain";
 import { ModelApp } from "./ModelApp";
+import { TrainingCheck } from "./TrainingCheck";
 import { WebcamTry } from "./Webcam";
-import type { DatasetInfo, DatasetSummary, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
+import type { DatasetInfo, DatasetSummary, FixKind, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
 
 const MODELS_KEPT = 10;
 
@@ -17,6 +18,8 @@ interface Props {
   datasetId: string | null;
   onDatasetChange: (id: string | null) => void;
   onOpenData: (id: string | null) => void;
+  onOpenDatasetTab: (id: string, tab: "models" | "label") => void;
+  onApplyFix: (fix: FixKind) => void;
   onUseCategories: (names: string[]) => void;
 }
 
@@ -47,7 +50,7 @@ function duration(seconds: number) {
   return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
 
-export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onDatasetChange, onOpenData, onUseCategories }: Props) {
+export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onDatasetChange, onOpenData, onOpenDatasetTab, onApplyFix, onUseCategories }: Props) {
   const { analysis, mode } = useEditor();
   const beginner = mode === "beginner";
   const categories = analysis?.categories ?? null;
@@ -330,6 +333,17 @@ export function TrainPage({ graph, onDesign, onTest, onExport, datasetId, onData
         {job && <Progress job={job} beginner={beginner} perEpoch={elapsedPerEpoch} />}
       </section>
 
+      {job && job.status !== "running" && job.checkup && !stale && (
+        <TrainingCheck
+          findings={job.checkup}
+          available={chosenId ? ["augment", "slower", "longer", "pretrained", "more_photos", "experiment"] : ["augment", "slower", "longer"]}
+          onFix={(fix) => {
+            if (fix === "more_photos" && chosenId) onOpenDatasetTab(chosenId, "label");
+            else if ((fix === "pretrained" || fix === "experiment") && chosenId) onOpenDatasetTab(chosenId, "models");
+            else onApplyFix(fix);
+          }}
+        />
+      )}
       {job && job.status !== "running" && job.hasModel && job.review && !stale && (
         <Mistakes
           jobId={job.id}

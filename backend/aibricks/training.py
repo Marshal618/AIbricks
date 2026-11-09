@@ -287,6 +287,9 @@ def public(job: Job | None) -> dict | None:
         return None
     data = asdict(job)
     data["elapsedSeconds"] = (job.finishedAt or time.time()) - job.startedAt
+    if job.task == "image" and job.status in ("finished", "stopped"):
+        from . import checkup  # imported here to keep this module's imports light
+        data["checkup"] = checkup.check(job.epochs, job.baseline)
     del data["files"], data["slug"], data["stopRequested"]
     return data
 
@@ -537,7 +540,9 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
 
 def _require_idle(dataset: str) -> None:
     """Training needs the computer to itself, and a copy of data that isn't changing underneath it."""
-    from . import datasets, health  # imported here, because both import this module
+    from . import datasets, experiments, health  # imported here, because they import this module
+    if experiments.blocks():
+        raise TrainingError(409, experiments.blocks())
     if health.is_checking():
         raise TrainingError(409, "Wait for the label check to finish. Both need this computer's full attention.")
     if dataset != DEFAULT_DATASET:

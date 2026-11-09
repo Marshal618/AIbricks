@@ -116,7 +116,7 @@ export function FindData({ datasetId, kind, categories, onImported, onUseCategor
     return (
       <section className="card">
         <div className="card-head">
-          <h2>No data yet?</h2>
+          <h2>Find open data</h2>
           <button className="button button-small" onClick={() => setOpen(true)}>Find open data</button>
         </div>
         <p className="muted small">Search free labelled datasets on Hugging Face and copy a sample into this dataset.</p>

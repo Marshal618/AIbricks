@@ -190,6 +190,9 @@ def add_categories(dataset: str, names: list[str]) -> dict:
 def _busy(dataset: str) -> str | None:
     if training.is_running() and training.current().dataset == dataset:
         return "Wait for training on this dataset to finish."
+    from . import experiments  # Imported here, because experiments imports this module.
+    if experiments.blocks(dataset):
+        return experiments.blocks(dataset)
     job = opendata.status(dataset)["job"]
     if job and job["status"] == "running":
         return "Wait for the import into this dataset to finish."

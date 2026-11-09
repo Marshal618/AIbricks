@@ -260,6 +260,7 @@ export function SoundLabels({ dataset, beginner, onChanged }: { dataset: Dataset
 
   return (
     <>
+      <h2 className="section-title">Add examples</h2>
       <section className="card">
         <div className="card-head">
           <h2>Record sounds</h2>
@@ -325,6 +326,7 @@ export function SoundLabels({ dataset, beginner, onChanged }: { dataset: Dataset
         </div>
       </section>
 
+      <h2 className="section-title">Check them</h2>
       <section className="card">
         <h2>Listen to your clips</h2>
         <p className="muted small">Remove clips that are silent by mistake or caught the wrong sound. Saved versions keep their own copy.</p>
