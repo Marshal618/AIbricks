@@ -24,9 +24,11 @@ METHODS = {
     "text": "A fine-tuned sentence model (sentence-transformers/all-MiniLM-L6-v2), trained on pairs of examples as in the "
             "SetFit method, with a logistic regression that picks the category.",
     "table": "Gradient-boosted decision trees (scikit-learn's HistGradientBoosting).",
+    "sound": "A frozen pretrained Audio Spectrogram Transformer (MIT/ast-finetuned-audioset-10-10-0.4593) reading 1-second "
+             "spectrograms, with a linear classifier trained on each clip and two time-shifted, louder or quieter copies.",
 }
-THINGS = {"image": "photos", "text": "texts", "table": "rows"}
-THING = {"image": "photo", "text": "text", "table": "row"}
+THINGS = {"image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
+THING = {"image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
 class CardNotes(BaseModel):

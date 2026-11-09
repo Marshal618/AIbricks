@@ -456,6 +456,15 @@ def _review_text(job: Job) -> None:
     _summarise_review(job, rows)
 
 
+def _review_files(job: Job) -> None:
+    """Reads what a sound train.py recorded. Clips are named by their content, so the name is the ID."""
+    rows = json.loads((_folder(job) / "data" / "review.json").read_text(encoding="utf-8"))
+    for row in rows:
+        row["path"] = row.pop("file")
+    _save_held_out(job, "category", [(row["path"], row["actual"], row["guess"]) for row in rows])
+    _summarise_review(job, rows)
+
+
 def _review_table(job: Job) -> None:
     """Keeps train.py's scores and column importance, which hold no rows of data."""
     metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
@@ -506,7 +515,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -612,7 +621,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table"):
+    for task in ("image", "text", "table", "sound"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -757,15 +766,16 @@ LIVE_CHECK_SECONDS = 5
 
 
 class _LivePredictor:
-    def __init__(self, job: Job):
+    def __init__(self, job: Job, script: str, unreadable: str):
         import queue
 
         self.job_id = job.id
+        self.unreadable = unreadable
         self.lines: queue.Queue[str | None] = queue.Queue()
         self.errors: collections.deque[str] = collections.deque(maxlen=20)
         folder = _folder(job)
         self.process = subprocess.Popen(
-            [sys.executable, "-I", "-u", "-c", explain.LIVE_RUNNER], cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": "2"},
+            [sys.executable, "-I", "-u", "-c", script], cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": "2"},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", bufsize=1,
         )
         self.used = time.time()
@@ -801,7 +811,7 @@ class _LivePredictor:
 
         self.used = time.time()
         try:
-            self.process.stdin.write(json.dumps({"image": base64.b64encode(data).decode(), "explain": explain_it}) + "\n")
+            self.process.stdin.write(json.dumps({"data": base64.b64encode(data).decode(), "explain": explain_it}) + "\n")
             self.process.stdin.flush()
         except (BrokenPipeError, OSError):
             raise TrainingError(500, self._problem("The live model stopped. Try again.")) from None
@@ -810,7 +820,7 @@ class _LivePredictor:
             raise TrainingError(504, "The model took too long to answer.")
         reply = json.loads(line)
         if "error" in reply:
-            raise TrainingError(422, "The model couldn't read this image.")
+            raise TrainingError(422, self.unreadable)
         return reply
 
     def alive(self) -> bool:
@@ -831,19 +841,24 @@ def predict_live(job_id: str, data: bytes, explain_it: bool = False) -> dict:
 
     Returns {"answers", "heatmap"}, where the heatmap of where it looked is None unless asked for.
     """
-    global _live
     read_image(data)
     job = stored(job_id)
     if job.task != "image":
         raise TrainingError(422, "This model doesn't read images.")
+    return ask_live(job, explain.LIVE_RUNNER, data, explain_it, "The model couldn't read this image.")
+
+
+def ask_live(job: Job, script: str, data: bytes, explain_it: bool, unreadable: str) -> dict:
+    """Asks the one model kept loaded, loading this one in its place first if needed."""
+    global _live
     if job.status == "running" or not job.hasModel:
         raise TrainingError(409, "This model has no saved file to answer with.")
     with _live_lock:
-        if _live is not None and (_live.job_id != job_id or not _live.alive()):
+        if _live is not None and (_live.job_id != job.id or not _live.alive()):
             _live.close()
             _live = None
         if _live is None:
-            _live = _LivePredictor(job)
+            _live = _LivePredictor(job, script, unreadable)
             threading.Thread(target=_close_when_idle, args=(_live,), daemon=True).start()
         return _live.ask(data, explain_it)
 

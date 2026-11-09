@@ -3,10 +3,11 @@ import * as api from "./api";
 import { DatasetLabels } from "./LabelPage";
 import { DatasetModels, DatasetOverview, DatasetVersions } from "./DatasetRepository";
 import { DataHealthTab } from "./DataHealth";
+import { SoundLabels } from "./Sound";
 import { TableData } from "./TableModels";
 import type { DatasetSummary, Mode } from "./types";
 
-const KIND_NAMES: Record<DatasetSummary["kind"], string> = { image: "Images", text: "Text", table: "Spreadsheet (CSV)" };
+const KIND_NAMES: Record<DatasetSummary["kind"], string> = { image: "Images", text: "Text", table: "Spreadsheet (CSV)", sound: "Sound" };
 
 type Tab = "overview" | "label" | "health" | "versions" | "models";
 const TABS: { id: Tab; name: string }[] = [
@@ -84,16 +85,16 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
             </label>
             <fieldset className="dataset-kind">
               <legend>Type of data</legend>
-              {(["image", "text", "table"] as const).map((value) => (
+              {(["image", "text", "sound", "table"] as const).map((value) => (
                 <label key={value}>
-                  <input type="radio" name="dataset-kind" checked={kind === value} onChange={() => setKind(value)} />
+                  <input type="radio" name="dataset-kind" checked={kind === value} onChange={() => { setKind(value); if (value === "sound" && !categories.trim()) setCategories("Background noise, "); }} />
                   {KIND_NAMES[value]}
                 </label>
               ))}
             </fieldset>
             {kind !== "table" && <label className="field">
               <span>Categories (optional)</span>
-              <input type="text" value={categories} placeholder="For example: Cat, Dog" onChange={(event) => setCategories(event.target.value)} />
+              <input type="text" value={categories} placeholder={kind === "sound" ? "For example: Clap, Whistle, Background noise" : "For example: Cat, Dog"} onChange={(event) => setCategories(event.target.value)} />
               <span className="muted small">Separate them with commas. You can also add them later, or take them from an open dataset.</span>
             </label>}
             <div><button className="button button-primary" type="submit" disabled={!name.trim()}>Create dataset</button></div>
@@ -177,7 +178,10 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild }: { mode:
   };
 
   const removeCategory = (name: string) => {
-    if (window.confirm(`Remove the category "${name}"? Its examples go back to being unsorted.`)) {
+    const warning = dataset?.kind === "sound"
+      ? `Remove the category "${name}" and its clips? They're saved in a version first, so you can restore them from Versions.`
+      : `Remove the category "${name}"? Its examples go back to being unsorted.`;
+    if (window.confirm(warning)) {
       void run(() => api.removeDatasetCategory(datasetId, name));
     }
   };
@@ -218,12 +222,14 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild }: { mode:
             <p className="muted small">
               {dataset.kind === "table"
                 ? `Spreadsheet · ${dataset.labelled.toLocaleString()} rows · ${dataset.columns?.length ?? 0} columns`
-                : `${KIND_NAMES[dataset.kind]} · ${dataset.labelled.toLocaleString()} labelled · ${dataset.unsorted.toLocaleString()} unsorted`}
+                : dataset.kind === "sound"
+                  ? `Sound · ${dataset.labelled.toLocaleString()} one-second ${dataset.labelled === 1 ? "clip" : "clips"}`
+                  : `${KIND_NAMES[dataset.kind]} · ${dataset.labelled.toLocaleString()} labelled · ${dataset.unsorted.toLocaleString()} unsorted`}
             </p>
           </div>
           <div className="label-buttons">
             <button className="button button-small button-quiet" onClick={() => void remove()}>Delete dataset</button>
-            {dataset.kind !== "table" && <button className="button button-primary" disabled={!dataset.labelled} onClick={() => onBuild(dataset)}>Build a model with this data</button>}
+            {(dataset.kind === "image" || dataset.kind === "text") && <button className="button button-primary" disabled={!dataset.labelled} onClick={() => onBuild(dataset)}>Build a model with this data</button>}
           </div>
         </header>
         {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
@@ -259,7 +265,9 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild }: { mode:
           </form>
         </section>}
 
-        {tab === "label" && dataset.kind !== "table" && <DatasetLabels
+        {tab === "label" && dataset.kind === "sound" && <SoundLabels dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
+
+        {tab === "label" && (dataset.kind === "image" || dataset.kind === "text") && <DatasetLabels
           dataset={dataset}
           onChanged={() => void load()}
           onUseCategories={(names) => void run(() => api.addDatasetCategories(datasetId, names))}

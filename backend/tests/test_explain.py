@@ -107,7 +107,7 @@ def test_every_kind_of_photo_model_gets_a_heatmap(tmp_path, name):
         assert process.stdout.readline().strip() == "ready", process.stderr.read()
         frame = base64.b64encode(half_red()).decode()
         for explain_it in (True, False, True):
-            process.stdin.write(json.dumps({"image": frame, "explain": explain_it}) + "\n")
+            process.stdin.write(json.dumps({"data": frame, "explain": explain_it}) + "\n")
             process.stdin.flush()
             reply = json.loads(process.stdout.readline())
             assert "error" not in reply, reply

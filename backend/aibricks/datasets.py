@@ -20,7 +20,7 @@ PREVIEW_SAMPLES = 8
 
 class DatasetIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
-    kind: str = Field(pattern="^(image|text|table)$")
+    kind: str = Field(pattern="^(image|text|table|sound)$")
     categories: list[str] = Field(default_factory=list, max_length=MAX_CATEGORIES)
 
 
@@ -87,6 +87,9 @@ def _summary(meta: dict) -> dict:
         return {"description": "", "licence": "", "rows": 0, "columns": []} | meta | {"counts": amounts, "labelled": meta.get("rows", 0), "unsorted": unsorted}
     if meta["kind"] == "image":
         amounts, unsorted = training.counts(names, dataset), labelling.queue(dataset)["total"]
+    elif meta["kind"] == "sound":
+        from . import sounds  # Imported here, because sounds imports this module.
+        amounts, unsorted = sounds.counts(names, dataset), 0
     else:
         queue = labelling.text_queue(names, dataset)
         amounts, unsorted = queue["counts"], queue["total"]
@@ -153,6 +156,10 @@ def preview(dataset: str) -> dict:
         if meta["kind"] == "image":
             files = sorted(path.name for path in training._images_in(training._category_folder(name, dataset)))
             samples = [{"id": item} for item in files[:PREVIEW_SAMPLES]]
+        elif meta["kind"] == "sound":
+            from . import sounds
+            files = sorted(path.name for path in sounds.files_in(training._category_folder(name, dataset)))
+            samples = [{"id": item} for item in files[:PREVIEW_SAMPLES]]
         else:
             samples = labelling.text_samples(name, PREVIEW_SAMPLES, dataset)
         rows.append({"name": name, "samples": samples})
@@ -217,7 +224,10 @@ def rename_category(dataset: str, old: str, new: str) -> dict:
 
 
 def remove_category(dataset: str, name: str) -> dict:
-    """Removes a category. Its examples go back to being unsorted, so no work is deleted."""
+    """Removes a category. Its examples go back to being unsorted, so no work is deleted.
+
+    Sound has no unsorted pile, so its clips are saved in a version first and can be restored from it.
+    """
     with training._lock:
         meta = _read(dataset)
         if name not in meta["categories"]:
@@ -226,7 +236,11 @@ def remove_category(dataset: str, name: str) -> dict:
         if problem:
             raise TrainingError(409, problem)
         folder = training._category_folder(name, dataset)
-        if folder.is_dir():
+        if meta["kind"] == "sound":
+            from . import versions  # Imported here, because versions imports this module.
+            versions.save_before_change(dataset, f"Saved automatically before removing {name}")
+            shutil.rmtree(folder, ignore_errors=True)
+        elif folder.is_dir():
             inbox = labelling.inbox(dataset)
             inbox.mkdir(parents=True, exist_ok=True)
             for path in folder.iterdir():

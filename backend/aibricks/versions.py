@@ -89,6 +89,11 @@ def _current_items(dataset: str, meta: dict, extra=()) -> Items:
         with closing(labelling._database(dataset)) as database:
             return [list(row) for row in database.execute("SELECT id, label FROM items WHERE removed = 0 ORDER BY seq")]
     items = []
+    if meta["kind"] == "sound":
+        from . import sounds  # Imported here, because sounds imports this module.
+        for name in dict.fromkeys([*meta["categories"], *extra]):
+            items += [[path.name, name] for path in sounds.files_in(training._category_folder(name, dataset))]
+        return sorted(items, key=lambda item: (item[0], item[1] or ""))
     for name in dict.fromkeys([*meta["categories"], *extra]):
         items += [[path.name, name] for path in training._images_in(training._category_folder(name, dataset)) if labelling._IMAGE_ID.match(path.name)]
     items += [[path.name, None] for path in training._images_in(labelling.inbox(dataset)) if labelling._IMAGE_ID.match(path.name)]
@@ -274,7 +279,7 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
         elif meta["kind"] == "text":
             _freeze_text(dataset, names, items, run)
         else:
-            target = run / "data" / "images"
+            target = run / "data" / ("sounds" if meta["kind"] == "sound" else "images")
             objects = _folder(dataset) / "objects"
             for name in names:
                 (target / name).mkdir(parents=True, exist_ok=True)
@@ -290,7 +295,7 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
 
 def _restore_images(dataset: str, current: Items, items: Items) -> None:
     objects = _folder(dataset) / "objects"
-    if training.image_total() - len(current) + len(items) > training.MAX_IMAGES:
+    if datasets._read(dataset)["kind"] == "image" and training.image_total() - len(current) + len(items) > training.MAX_IMAGES:
         raise TrainingError(413, f"The image store would go over {training.MAX_IMAGES:,} images. Remove some first.")
     staging = training.root(dataset) / "restoring"
     shutil.rmtree(staging, ignore_errors=True)
@@ -355,7 +360,7 @@ def restore(dataset: str, number: int) -> dict:
         if changes is None or _has_changes(changes):
             saved_first = _save(dataset, meta, index, current, f"Saved automatically before restoring v{number}", True)["number"]
             index = _index(dataset)
-        if meta["kind"] == "image":
+        if meta["kind"] in ("image", "sound"):
             _restore_images(dataset, current, items)
         elif meta["kind"] == "table":
             _restore_table(dataset, number)

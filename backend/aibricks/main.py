@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, system, tables, textmodels, training, versions
+from . import cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, system, tables, textmodels, training, versions
 
 
 @contextlib.asynccontextmanager
@@ -192,7 +192,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -685,6 +685,58 @@ def explain_text_model(job_id: str, request: TextToTry) -> dict:
 @app.get("/api/models/{job_id}/mistakes")
 def text_model_mistakes(job_id: str) -> dict:
     return _dataset_reply(textmodels.mistakes, job_id)
+
+
+# --------------------------------------------------------------------- sound
+
+@app.post("/api/datasets/{dataset_id}/sounds")
+async def add_sound(dataset_id: str, request: Request, category: str = Query(min_length=1, max_length=200)) -> dict:
+    """Adds a WAV recording to a category, cut into 1-second clips."""
+    data = await _read_upload(request, sounds.MAX_SOUND_BYTES)
+    try:
+        return await run_in_threadpool(sounds.add_recording, category, data, dataset_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/datasets/{dataset_id}/sounds")
+def list_sounds(dataset_id: str, category: str = Query(min_length=1, max_length=200)) -> dict:
+    return _dataset_reply(sounds.clips, dataset_id, category)
+
+
+@app.get("/api/datasets/{dataset_id}/sounds/{clip_id}")
+def sound_file(dataset_id: str, clip_id: str, category: str = Query(min_length=1, max_length=200)) -> FileResponse:
+    path = _dataset_reply(sounds.clip_file, dataset_id, category, clip_id)
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/datasets/{dataset_id}/sounds/{clip_id}")
+def remove_sound(dataset_id: str, clip_id: str, category: str = Query(min_length=1, max_length=200)) -> dict:
+    _dataset_reply(sounds.remove_clip, dataset_id, category, clip_id)
+    return {"ok": True}
+
+
+@app.post("/api/datasets/{dataset_id}/train-sound", dependencies=[Depends(_needs_json)])
+def train_sound_model(dataset_id: str) -> dict:
+    try:
+        return {"job": training.public(sounds.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/sound-mistakes")
+def sound_mistakes(job_id: str) -> dict:
+    return _dataset_reply(sounds.mistakes, job_id)
+
+
+@app.post("/api/models/{job_id}/listen")
+async def listen(job_id: str, request: Request, explain: bool = False) -> dict:
+    """A sound model's answers for a WAV recording, its spectrogram, and with explain=true where it listened."""
+    data = await _read_upload(request, sounds.MAX_SOUND_BYTES)
+    try:
+        return await run_in_threadpool(sounds.listen, job_id, data, explain)
+    except training.TrainingError as error:
+        raise _raise(error) from None
 
 
 # -------------------------------------------------------------- spreadsheet models

@@ -21,6 +21,7 @@ const KIND = {
   image: { name: "Images", className: "is-image" },
   text: { name: "Text", className: "is-text" },
   table: { name: "Spreadsheet", className: "is-table" },
+  sound: { name: "Sound", className: "is-sound" },
 } as const;
 
 const STATUS: Record<string, { name: string; className: string; mark: string }> = {

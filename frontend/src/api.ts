@@ -1,4 +1,4 @@
-import type { SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -403,3 +403,31 @@ export async function fetchAllModels(limit = 20): Promise<WorkspaceModel[]> {
 }
 
 export const fetchSystem = (): Promise<SystemInfo> => getJson("/api/system");
+
+export async function addRecording(dataset: string, category: string, recording: Blob): Promise<{ added: number; duplicates: number; count: number }> {
+  const response = await sendFile(`/api/datasets/${dataset}/sounds?${new URLSearchParams({ category })}`, recording);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const fetchClips = (dataset: string, category: string): Promise<{ clips: string[]; total: number }> =>
+  getJson(`/api/datasets/${dataset}/sounds?${new URLSearchParams({ category })}`);
+
+export const clipUrl = (dataset: string, category: string, clip: string) => `/api/datasets/${dataset}/sounds/${clip}?${new URLSearchParams({ category })}`;
+
+export async function removeClip(dataset: string, category: string, clip: string) {
+  const response = await fetch(clipUrl(dataset, category, clip), { method: "DELETE" });
+  if (!response.ok) throw new Error(await errorMessage(response));
+}
+
+export async function trainSoundModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-sound`);
+}
+
+export async function listen(job: string, recording: Blob, explain: boolean): Promise<SoundAnswer> {
+  const response = await sendFile(`/api/models/${job}/listen?explain=${explain}`, recording);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const fetchSoundMistakes = (job: string): Promise<{ mistakes: SoundMistake[]; total: number }> => getJson(`/api/models/${job}/sound-mistakes`);

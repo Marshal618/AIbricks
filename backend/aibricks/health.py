@@ -54,9 +54,11 @@ def is_checking(dataset: str | None = None) -> bool:
 def _current(dataset: str, meta: dict) -> dict[str, set]:
     """Each labelled example's ID and its current labels. A photo can be in two categories."""
     found: dict[str, set] = {}
-    if meta["kind"] == "image":
+    if meta["kind"] in ("image", "sound"):
+        from . import sounds  # Imported here, because sounds imports datasets, which imports this module.
+        files = sounds.files_in if meta["kind"] == "sound" else training._images_in
         for name in meta["categories"]:
-            for path in training._images_in(training._category_folder(name, dataset)):
+            for path in files(training._category_folder(name, dataset)):
                 found.setdefault(path.name, set()).add(name)
     else:
         with closing(labelling._database(dataset)) as database:
@@ -68,7 +70,7 @@ def _current(dataset: str, meta: dict) -> dict[str, set]:
 
 def _exact_conflicts(dataset: str, meta: dict, current: dict[str, set]) -> list[dict]:
     """The same photo filed under two categories, or the same text with two different labels."""
-    if meta["kind"] == "image":
+    if meta["kind"] in ("image", "sound"):
         return [{"ids": [item], "labels": sorted(labels)} for item, labels in current.items() if len(labels) > 1]
     groups: dict[str, list[tuple[str, str]]] = {}
     known = labelling.texts_by_id(list(current), dataset)
@@ -179,6 +181,8 @@ def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, op
         steps.append(f"Resolve {len(conflicts)} example{'s' if len(conflicts) != 1 else ''} filed under more than one category.")
     if steps:
         return 1, steps
+    if meta["kind"] == "sound":
+        return 2, ["The label check isn't available for sound yet, so this is the highest level a sound dataset can reach for now."]
     if result is None:
         return 2, ["Run the label check."]
     if unchecked:
@@ -197,7 +201,7 @@ def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, op
 def start(dataset: str) -> dict:
     global _job
     meta = datasets._read(dataset)
-    if meta["kind"] == "table":
+    if meta["kind"] in ("table", "sound"):
         raise TrainingError(422, "The label check is for image and text datasets.")
     with _lock, training._lock:
         if is_checking():

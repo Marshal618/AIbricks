@@ -96,6 +96,18 @@ Every run holds back about 20% of the data to check the model on. The held-back 
 
 **Card** shows a model card for any finished model, with sections from Mitchell et al. (2019): details, intended use, training data, how it was checked, results with a likely range for the accuracy, and limitations worked out from the results, such as weak categories, uneven data or a small check. You write the intended use, and downloads include the card as `MODEL_CARD.md`.
 
+## Sort sounds
+
+Create a dataset with the type **Sound**. It starts with a **Background noise** category, because without one the model has to pick one of your sounds even when nothing is happening.
+
+On the **Label** tab, **Use microphone** and hold a category's button while making the sound. Every second you hold becomes one 1-second clip. Background categories also get **Record 20 s** for one long, steady recording of the room. You can add WAV files too, and listen to every clip to remove bad ones. Recordings are saved as 16 kHz mono WAV, and only WAV files can be added for now.
+
+On the **Models** tab, **Start training** needs at least 4 clips per category, and 20 or more gives steadier scores. Each clip becomes a spectrogram, a picture of which pitches are loud at each moment. The pretrained [Audio Spectrogram Transformer](https://arxiv.org/abs/2104.01778), which learned from about two million AudioSet clips, reads that picture and stays frozen. A small classifier learns your categories from what it reports, using each clip and two time-shifted, louder or quieter copies. The transformer was made for 10-second clips. For 1-second clips its table of positions is cut to the first 1.28 seconds, as the AST paper does for shorter inputs. The first run downloads it, about 350 MB, from Hugging Face.
+
+**Listen with the microphone** then shows the model's guess for the last second, about twice a second, with the spectrogram it heard. **Show where it listens** highlights the moments and pitches that mattered most. Mistakes can be played back and moved, and downloads include `predict.py` for WAV files. The label check isn't available for sound yet, so sound datasets reach level 2 on the Health tab at most.
+
+The model hears the room as well as the sound. Record in the places you'll use it, and expect it to do worse with a different microphone.
+
 ## Train a text sorter
 
 Open a text dataset, go to **Models** and press **Start training**. It needs at least 4 labelled examples per category. You can then try the model, fix labels on its mistakes and download it as a project that runs on its own.
@@ -154,6 +166,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/projects.py` stores saved projects as JSON files.
 - `backend/aibricks/runner.py` runs the test in a separate, time-limited process.
 - `backend/aibricks/training.py` stores your images and runs training and predictions.
+- `backend/aibricks/sounds.py` stores sound clips and trains the sound sorter.
 - `backend/aibricks/explain.py` makes the heatmaps and word weights that show where a model looked.
 - `backend/aibricks/system.py` reports the training device and workspace size for the home screen.
 

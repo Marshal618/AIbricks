@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
 import { ExplainableText } from "./Explain";
+import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { CompareModels, ModelCardView } from "./ModelInsights";
 import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
@@ -110,7 +111,9 @@ export function DatasetOverview({ dataset, beginner, onSaved, onLabel }: { datas
           <div className="preview-category" key={category.name}>
             <h3>{category.name} <span className="muted">{(dataset.counts[category.name] ?? 0).toLocaleString()}</span></h3>
             {category.samples.length === 0 && <p className="muted small">Nothing in this category yet.</p>}
-            {dataset.kind === "image"
+            {dataset.kind === "sound"
+              ? <ClipPreview dataset={dataset} category={category.name} clips={category.samples.map((sample) => sample.id)} />
+              : dataset.kind === "image"
               ? <ul className="preview-images">{category.samples.map((sample, index) => (
                   <li key={sample.id}><img src={api.datasetPreviewImage(dataset.id, category.name, sample.id)} alt={`${category.name} example ${index + 1}`} loading="lazy" /></li>
                 ))}</ul>
@@ -440,6 +443,17 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
     }
   };
 
+  const startSound = async () => {
+    setProblem(null);
+    try {
+      await api.trainSoundModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
   const stop = async (id: string) => {
     setProblem(null);
     try {
@@ -453,6 +467,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
   const cardForModel = models?.find((model) => model.id === cardFor) ?? null;
   const newestTable = models?.find((model) => model.task === "table" && model.status !== "running" && model.hasModel) ?? null;
   const newestPhoto = models?.find((model) => model.task === "image" && model.status === "finished" && model.hasModel) ?? null;
+  const newestSound = models?.find((model) => model.task === "sound" && model.status === "finished" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -470,6 +485,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
       {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
       {newestPhoto && (
@@ -479,6 +495,8 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged }: { datas
           <WebcamTry key={newestPhoto.id} jobId={newestPhoto.id} beginner={beginner} />
         </section>
       )}
+      {newestSound && <SoundTry key={newestSound.id} model={newestSound} beginner={beginner} />}
+      {newestSound && <SoundMistakes key={`m${newestSound.id}`} model={newestSound} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       {newestText && <TryText key={newestText.id} model={newestText} beginner={beginner} />}
       {newestText && <TextMistakes key={`m${newestText.id}`} model={newestText} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       <section className="card">

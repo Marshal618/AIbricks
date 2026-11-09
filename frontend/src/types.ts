@@ -82,7 +82,7 @@ export interface Analysis {
 export interface DatasetSummary {
   id: string;
   name: string;
-  kind: "image" | "text" | "table";
+  kind: "image" | "text" | "table" | "sound";
   categories: string[];
   counts: Record<string, number>;
   labelled: number;
@@ -194,7 +194,7 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number } | null;
-  task: "image" | "text" | "table";
+  task: "image" | "text" | "table" | "sound";
   metrics: TableMetrics | null;
   device: string;
   stage: "training" | "reviewing";
@@ -478,4 +478,29 @@ export interface SystemInfo {
   platform: string;
   cpus: number;
   storage: { path: string; bytes: number; freeBytes: number; parts: { data: number; models: number; projects: number; downloads: number } };
+}
+
+export interface Grid {
+  width: number;
+  height: number;
+  /** Row by row from the top, 0 to 1. */
+  values: number[];
+}
+
+export interface SoundAnswer {
+  answers: PredictAnswer[];
+  /** The first second of the recording, high pitches at the top. */
+  spectrogram: Grid;
+  heatmap: Heatmap | null;
+  clips: number;
+}
+
+export interface SoundMistake {
+  index: number;
+  actual: string;
+  guess: string;
+  chance: number;
+  file: string;
+  movedTo?: string | null;
+  removed?: boolean;
 }

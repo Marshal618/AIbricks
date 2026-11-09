@@ -106,7 +106,7 @@ def heatmap(image):
 for line in sys.stdin:
     try:
         request = json.loads(line)
-        image = _load_image(io.BytesIO(base64.b64decode(request['image'])), transform).unsqueeze(0)
+        image = _load_image(io.BytesIO(base64.b64decode(request['data'])), transform).unsqueeze(0)
         if request.get('explain'):
             answers, picture = heatmap(image)
         else:

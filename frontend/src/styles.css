@@ -653,3 +653,30 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
   .run-table .run-open { display: none; }
   .system-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Sound */
+.kind-tag.is-sound::before { background: var(--port-summary); }
+.sound-recorder { display: flex; flex-direction: column; gap: 10px; }
+.sound-mic { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.level-meter { display: inline-block; flex: 1; max-width: 240px; height: 8px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.level-meter span { display: block; height: 100%; background: var(--pass); transition: width 80ms linear; }
+.level-meter span.is-loud { background: var(--fail); }
+.sound-row { display: flex; align-items: stretch; gap: 8px; }
+.sound-row .webcam-hold { flex: 1; min-width: 0; }
+.sound-upload { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.sound-upload label { display: flex; align-items: center; gap: 6px; }
+.clip-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px 12px; }
+.clip-list li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.clip-list audio { flex: 1; min-width: 0; height: 32px; }
+.clip-list.is-compact { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.sound-result { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.spectrogram { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.spectrogram-frame { position: relative; aspect-ratio: 2 / 1; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--surface-2); }
+.spectrogram-canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: auto; }
+.spectrogram-axes { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sound-mistake { align-items: center; }
+.sound-mistake audio { width: 220px; max-width: 100%; height: 32px; }
+@media (max-width: 640px) {
+  .sound-result { grid-template-columns: minmax(0, 1fr); }
+  .sound-row { flex-direction: column; }
+}
