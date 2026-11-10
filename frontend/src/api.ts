@@ -1,4 +1,4 @@
-import type { Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -270,8 +270,20 @@ export async function fetchSavedDataset(id: string): Promise<DatasetSummary> {
   return response.json();
 }
 
-export async function createDataset(name: string, kind: DatasetSummary["kind"], categories: string[], goal: "sort" | "unusual" = "sort"): Promise<DatasetSummary> {
-  return sendJson("/api/datasets", { name, kind, categories, goal });
+export async function createDataset(name: string, kind: DatasetSummary["kind"], categories: string[], goal: NonNullable<DatasetSummary["goal"]> = "sort", points: "body" | "hands" = "body"): Promise<DatasetSummary> {
+  return sendJson("/api/datasets", { name, kind, categories, goal, points });
+}
+
+export async function trainPoseModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-pose`);
+}
+
+export const fetchPoseMistakes = (job: string): Promise<{ mistakes: TrainingMistake[]; total: number }> => getJson(`/api/models/${job}/pose-mistakes`);
+
+export async function poseAnswer(job: string, file: Blob): Promise<PoseAnswer> {
+  const response = await sendFile(`/api/train/${job}/predict-live`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
 }
 
 export async function trainUnusualModel(id: string): Promise<void> {
@@ -467,3 +479,27 @@ export async function findFailures(job: string): Promise<FailureSearch> {
 }
 
 export const datasetPhotoUrl = (dataset: string, category: string, file: string) => `/api/datasets/${dataset}/preview/${file}?${new URLSearchParams({ category })}`;
+
+// ------------------------------------------------------------- finding things in photos
+
+export const fetchBoxes = (dataset: string): Promise<{ photos: BoxedPhoto[]; done: number; total: number }> => getJson(`/api/datasets/${dataset}/boxes`);
+
+export async function saveBoxes(dataset: string, image: string, boxes: Box[]): Promise<{ boxes: Box[] }> {
+  return putJson(`/api/datasets/${dataset}/boxes/${image}`, { boxes: boxes.map(({ category, x, y, w, h }) => ({ category, x, y, w, h })) });
+}
+
+export const clearBoxes = (dataset: string, image: string) => send(`/api/datasets/${dataset}/boxes/${image}`, "DELETE");
+
+export async function trainFindModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-find`);
+}
+
+export const fetchFindSettings = (job: string): Promise<{ sure: number; categories: string[] }> => getJson(`/api/models/${job}/find`);
+
+export const setFindSure = (job: string, sure: number): Promise<{ sure: number }> => putJson(`/api/models/${job}/find`, { sure });
+
+export async function findBoxes(job: string, file: Blob): Promise<FoundBoxes> {
+  const response = await sendFile(`/api/train/${job}/predict-live`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}

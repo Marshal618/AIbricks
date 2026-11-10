@@ -16,7 +16,7 @@ function cameraProblem(error: unknown) {
 }
 
 /** Starts the camera while `on` is true, and always stops it again, so the light never stays on. */
-function useCamera(on: boolean) {
+export function useCamera(on: boolean) {
   const video = useRef<HTMLVideoElement>(null);
   const [ready, setReady] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -52,7 +52,7 @@ function useCamera(on: boolean) {
 }
 
 /** The current frame as a JPEG. The preview is mirrored like a mirror, but the photo isn't. */
-function grab(video: HTMLVideoElement): Promise<File | null> {
+export function grab(video: HTMLVideoElement): Promise<File | null> {
   const scale = Math.min(1, FRAME_SIDE / Math.max(video.videoWidth, video.videoHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(video.videoWidth * scale);
@@ -64,7 +64,7 @@ function grab(video: HTMLVideoElement): Promise<File | null> {
   ));
 }
 
-function CameraView({ video, ready, problem, children }: ReturnType<typeof useCamera> & { children?: ReactNode }) {
+export function CameraView({ video, ready, problem, children }: ReturnType<typeof useCamera> & { children?: ReactNode }) {
   return (
     <div className="webcam-frame">
       <video ref={video} className="webcam-video" muted playsInline aria-label="Camera preview" />

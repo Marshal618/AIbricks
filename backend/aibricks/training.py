@@ -129,6 +129,7 @@ def read_image(data: bytes) -> str:
 def add_image(category: str, data: bytes, dataset: str = DEFAULT_DATASET) -> dict:
     from . import labelling  # imported here, because labelling imports this module
     labelling._require_kind(dataset, "image")
+    labelling.require_sorting(dataset)
     extension = read_image(data)
     with _lock:
         if image_total() >= MAX_IMAGES:
@@ -361,6 +362,9 @@ def _environment(folder: Path) -> dict[str, str]:
         "PYTORCH_ENABLE_MPS_FALLBACK": "1",
         "TORCH_HOME": str(_cache() / "torch"),
         "HF_HOME": str(_cache() / "huggingface"),
+        "AI_BRICKS_POINTS_CACHE": str(_cache() / "mediapipe"),
+        # MediaPipe loads matplotlib, which would rebuild its font cache in every run's own home folder.
+        "MPLCONFIGDIR": str(_cache() / "matplotlib"),
         "HF_HUB_DISABLE_TELEMETRY": "1",
         "TOKENIZERS_PARALLELISM": "false",
     }
@@ -481,6 +485,33 @@ def _review_anomaly(job: Job) -> None:
     _summarise_review(job, rows)
 
 
+def _review_pose(job: Job) -> None:
+    """Like a photo model's review, plus how many photos had no body or hands in view."""
+    folder = _folder(job) / "data"
+    job.metrics = json.loads((folder / "metrics.json").read_text(encoding="utf-8"))
+    _review_files(job)
+
+
+DETECT_PHOTOS_KEPT = 40
+
+
+def _review_detect(job: Job) -> None:
+    """Keeps what the detector found on each held-back photo, so its misses can be shown on the photos."""
+    folder = _folder(job) / "data"
+    rows = json.loads((folder / "review.json").read_text(encoding="utf-8"))
+    metrics = json.loads((folder / "metrics.json").read_text(encoding="utf-8"))
+    # Photos with mistakes come first, as they're the ones worth looking at.
+    rows.sort(key=lambda row: (-(row["missed"] + row["falseAlarms"]), row["file"]))
+    job.metrics = metrics | {"photosChecked": rows[:DETECT_PHOTOS_KEPT]}
+    per = metrics["perCategory"]
+    job.review = {
+        "total": metrics["photos"], "correct": metrics["allRight"],
+        "categories": {name: {"correct": value["found"], "total": value["found"] + value["missed"]} for name, value in per.items()},
+        "mistakeCount": metrics["photos"] - metrics["allRight"], "mistakes": [],
+    }
+    _save_held_out(job, "detect", [(row["file"], len(row["real"]), row["right"]) for row in rows])
+
+
 def _review_table(job: Job) -> None:
     """Keeps train.py's scores and column importance, which hold no rows of data."""
     metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
@@ -531,7 +562,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -639,7 +670,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table", "sound", "anomaly"):
+    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -864,6 +895,12 @@ def predict_live(job_id: str, data: bytes, explain_it: bool = False) -> dict:
     if job.task == "anomaly":
         from . import anomaly  # imported here, because anomaly imports this module
         return ask_live(job, anomaly.LIVE_RUNNER, data, explain_it, "The model couldn't read this image.")
+    if job.task == "detect":
+        from . import finder  # imported here, because finder imports this module
+        return ask_live(job, finder.LIVE_RUNNER, data, False, "The model couldn't read this image.")
+    if job.task == "pose":
+        from . import poses  # imported here, because poses imports this module
+        return ask_live(job, poses.LIVE_RUNNER, data, False, "The model couldn't read this image.")
     if job.task != "image":
         raise TrainingError(422, "This model doesn't read images.")
     return ask_live(job, explain.LIVE_RUNNER, data, explain_it, "The model couldn't read this image.")

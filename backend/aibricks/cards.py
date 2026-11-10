@@ -26,11 +26,15 @@ METHODS = {
     "table": "Gradient-boosted decision trees (scikit-learn's HistGradientBoosting).",
     "anomaly": "Learns from normal photos only, following PatchCore (Roth et al., 2022): patch features from a pretrained "
                "ResNet-18 are kept as a memory, and a photo is unusual when its least normal patch is far from all of them.",
+    "detect": "A Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained on COCO by torchvision, "
+              "with its last layer replaced and the whole detector fine-tuned on boxed photos.",
+    "pose": "MediaPipe's pose or hand landmarker (Google, Apache 2.0) finds body or hand points, and a small fully "
+            "connected network trained on those points, measured from the body or wrist, names the category.",
     "sound": "A frozen pretrained Audio Spectrogram Transformer (MIT/ast-finetuned-audioset-10-10-0.4593) reading 1-second "
              "spectrograms, with a linear classifier trained on each clip and two time-shifted, louder or quieter copies.",
 }
-THINGS = {"anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
-THING = {"anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
+THINGS = {"pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
+THING = {"pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
 class CardNotes(BaseModel):

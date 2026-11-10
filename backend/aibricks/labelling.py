@@ -115,12 +115,24 @@ def image_file(image_id: str, dataset: str = training.DEFAULT_DATASET) -> Path:
     return path
 
 
+def require_sorting(dataset: str) -> None:
+    """Photos in a “find things” dataset get boxes, so they can't be filed under a category."""
+    if dataset == training.DEFAULT_DATASET:
+        return
+    from . import datasets  # imported here because datasets imports this module
+    if datasets._read(dataset).get("goal") == "find":
+        raise TrainingError(422, "In a “find things” dataset, photos get boxes rather than a category.")
+
+
 def _require_category(dataset: str, category: str) -> None:
     """A label outside the dataset's categories would be stored where nothing can see it."""
     if dataset == training.DEFAULT_DATASET:
         return
     from . import datasets  # imported here because datasets imports this module
-    if category not in datasets._read(dataset)["categories"]:
+    meta = datasets._read(dataset)
+    if meta.get("goal") == "find":
+        raise TrainingError(422, "In a “find things” dataset, photos get boxes rather than a category.")
+    if category not in meta["categories"]:
         raise TrainingError(422, f'"{category[:40]}" isn\'t one of this dataset\'s categories. Refresh the page to see the current ones.')
 
 
