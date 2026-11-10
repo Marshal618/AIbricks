@@ -147,13 +147,15 @@ It follows the idea of Domino (Eyuboglu et al., ICLR 2022). CLIP, an open model 
 
 After a photo model trains, the **Training check** reads its loss chart and names what it sees in plain words: memorising the training photos, too simple to learn, unstable steps, still improving when it stopped, or healthy. Each finding offers fixes. On the Train step of the Model builder, **Vary training photos**, **Learn more slowly** and **Train for longer** change your design and take you to the test.
 
-## Turn a photo model into an app
+## Turn a photo or pose model into an app
 
-**Open as an app** and **Download app** appear under the newest photo model on the Models tab and on the Train step. They make a single web page that runs the model by itself in any browser, with the camera or a chosen photo. Photos are checked on the device and never uploaded.
+**Open as an app** and **Download app** appear under the newest photo or pose model on the Models tab and on the Train step. They make a single web page that runs the model by itself in any browser, with the camera or a chosen photo. Photos are checked on the device and never uploaded.
 
 The page can follow simple rules: when it's at least a chosen percentage sure of a category for half a second, it can play a beep, show a message, count, or send the result to a web address you type, such as an [ntfy](https://ntfy.sh) topic. Rules are saved in that browser.
 
-The model is exported to [ONNX](https://onnx.ai), an open format for trained models, and run by ONNX Runtime Web. That runtime loads from a pinned CDN version, checked against a fixed hash, so the page needs internet the first time it opens. When it opens, it runs a fixed test pattern and compares the answer with PyTorch's, and it warns you if they differ. Phones only allow the camera on `https://` pages, so put the file on any website, such as GitHub Pages, to use it on a phone. Models over 120 MB, like the vision transformer, are too big for a page. Text and sound models can't become apps yet.
+The model is exported to [ONNX](https://onnx.ai), an open format for trained models, and run by ONNX Runtime Web. That runtime loads from a pinned CDN version, checked against a fixed hash, so the page needs internet the first time it opens. When it opens, it runs a fixed test pattern and compares the answer with PyTorch's, and it warns you if they differ. Phones only allow the camera on `https://` pages, so put the file on any website, such as GitHub Pages, to use it on a phone. Models over 120 MB, like the vision transformer, are too big for a page. Text, sound, unusual-photo and find-things models can't become apps yet.
+
+A pose model's page also carries MediaPipe's point-finding model, about 6 MB for bodies or 8 MB for hands, and runs it with MediaPipe's web library, loaded from a pinned CDN version checked against a fixed hash. It draws the points on the camera or photo, and says when no one is in view instead of guessing. When it opens, it also measures a set of made-up points and compares the result with how training measured them, so a page that would measure poses differently says so.
 
 ## Sort sounds
 

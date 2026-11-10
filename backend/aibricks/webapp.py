@@ -1,9 +1,12 @@
-"""Turns a trained photo model into a single web page that runs on its own, in any browser.
+"""Turns a trained photo or pose model into a single web page that runs on its own, in any browser.
 
 The model is exported to ONNX, an open format for trained models, and embedded in the page. The
 page runs it with ONNX Runtime Web, so photos are checked on the device and never uploaded. It
 also checks itself when it opens: it runs a fixed test pattern and compares the answer with the
 one PyTorch gave, so a model that converted wrongly says so instead of guessing quietly.
+
+A pose model's page also carries MediaPipe's point-finding model and runs it with MediaPipe's own
+web library. It checks that its sums on the points match the ones training used, the same way.
 """
 from __future__ import annotations
 
@@ -22,6 +25,9 @@ MAX_APP_MODEL_BYTES = 120 * 1024 * 1024  # Base64 adds a third, and a phone has 
 RUNTIME_VERSION = "1.30.0"
 RUNTIME_URL = f"https://cdn.jsdelivr.net/npm/onnxruntime-web@{RUNTIME_VERSION}/dist/"
 RUNTIME_INTEGRITY = "sha384-N94xSNjPDbfBJj4+QINst0nbHpcCm8kc1qNlIP/wA0muqjR3aVyIuDkMeccPrLvQ"
+VISION_VERSION = "1.1.1"
+VISION_URL = f"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@{VISION_VERSION}/"
+VISION_INTEGRITY = "sha384-33ConKAFiqnDTqoc8FFsTiKhp23eN52R5hP3ZqPBuRvIe9XyWblqpaEYnZZNVIvI"
 
 # Runs in the model's own folder, so it reads the same settings that training used.
 _EXPORT = """
@@ -50,6 +56,44 @@ print(json.dumps({'size': IMAGE_SIZE, 'channels': CHANNELS, 'mean': mean, 'std':
 """
 
 
+# A pose model's network, and a check that the page measures points exactly as training did.
+_EXPORT_POSE = """
+import json, math, sys, warnings
+sys.path.insert(0, '.')
+warnings.filterwarnings('ignore')
+import numpy as np
+import torch
+import model as m
+settings = json.loads(open('model/settings.json', encoding='utf-8').read())
+network = m.build(settings['categories'])
+network.load_state_dict(torch.load('model/weights.pt', map_location='cpu', weights_only=True))
+network.eval()
+pattern = torch.tensor([math.sin(i * 0.37) for i in range(m.FEATURES)], dtype=torch.float32).reshape(1, m.FEATURES)
+with torch.no_grad():
+    expected = network(pattern)[0].tolist()
+torch.onnx.export(network, (torch.zeros(1, m.FEATURES),), 'app.onnx.partial', dynamo=False, input_names=['features'], output_names=['logits'], opset_version=17)
+rng = np.random.default_rng(7)
+width, height = 640, 480
+sx, sy = width / max(width, height), height / max(width, height)
+def points(count):
+    return [{'x': float(x), 'y': float(y), 'z': float(z), 'visibility': float(v)} for x, y, z, v in rng.uniform([0.1, 0.1, -0.2, 0], [0.9, 0.9, 0.2, 1], (count, 4))]
+def xyz(rows):
+    return np.array([[p['x'] * sx, p['y'] * sy, p['z'] * sx] for p in rows], dtype=np.float32)
+if m.POINTS == 'body':
+    body = points(m.BODY_POINTS)
+    sample = {'landmarks': [body]}
+    features = m.body_features(xyz(body), np.array([p['visibility'] > m.SEEN for p in body], dtype=np.float32))
+else:
+    left, right = points(m.HAND_POINTS), points(m.HAND_POINTS)
+    sample = {'landmarks': [right, left], 'handedness': [[{'categoryName': 'Right'}], [{'categoryName': 'Left'}]]}
+    features = m.hand_features({'Left': xyz(left), 'Right': xyz(right)})
+import os
+os.replace('app.onnx.partial', 'app.onnx')
+print(json.dumps({'kind': 'pose', 'points': m.POINTS, 'features': m.FEATURES, 'labels': settings['categories'], 'check': expected,
+                  'sample': {'width': width, 'height': height, 'result': sample, 'features': [float(v) for v in features]}}))
+"""
+
+
 def _export(job: training.Job) -> dict:
     """Exports the model once. A trained model never changes, so later pages reuse the file."""
     folder = training._folder(job)
@@ -59,7 +103,7 @@ def _export(job: training.Job) -> dict:
     try:
         with training._predictions:
             done = subprocess.run(
-                [sys.executable, "-I", "-c", _EXPORT], cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
+                [sys.executable, "-I", "-c", _EXPORT_POSE if job.task == "pose" else _EXPORT], cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace", timeout=training.PREDICT_LIMIT_SECONDS,
             )
     except subprocess.TimeoutExpired:
@@ -74,8 +118,8 @@ def _export(job: training.Job) -> dict:
 
 def _job(job_id: str) -> training.Job:
     job = training.stored(job_id)
-    if job.task != "image":
-        raise TrainingError(422, "Apps can be made from photo models for now.")
+    if job.task not in ("image", "pose"):
+        raise TrainingError(422, "Apps can be made from photo models and pose models for now.")
     if job.status == "running":
         raise TrainingError(409, "This model is still training.")
     if not job.hasModel:
@@ -91,8 +135,17 @@ def page(job_id: str) -> tuple[str, str]:
     if len(model) > MAX_APP_MODEL_BYTES:
         raise TrainingError(413, f"This model is {len(model) // (1024 * 1024)} MB, too big to put in a web page. Smaller models, like the ones built from blocks, work best.")
     # No "<" at all, so nothing in a name can end the script block or change how it's read.
-    settings = json.dumps({**info, "name": job.projectName, "trainedAt": job.startedAt}).replace("<", "\\u003c")
+    pose = job.task == "pose"
+    what = ("hand signs" if info.get("points") == "hands" else "poses") if pose else "photos"
+    settings = json.dumps({**info, "name": job.projectName, "trainedAt": job.startedAt, "what": what}).replace("<", "\\u003c")
+    finder = training._folder(job) / "model" / "points.task"
+    extra = ""
+    if pose:
+        extra = (f'<script id="finder" type="application/octet-stream">{base64.b64encode(finder.read_bytes()).decode()}</script>\n'
+                 f'<script src="{VISION_URL}vision_bundle.js" integrity="{VISION_INTEGRITY}" crossorigin="anonymous"></script>')
     text = (_PAGE
+            .replace("__MODEL_CODE__", (_POSE_CODE if pose else _IMAGE_CODE).replace("__VISION__", VISION_URL))
+            .replace("__EXTRA__", extra)
             .replace("__TITLE__", html.escape(job.projectName))
             .replace("__RUNTIME__", RUNTIME_URL)
             .replace("__INTEGRITY__", RUNTIME_INTEGRITY)
@@ -100,6 +153,162 @@ def page(job_id: str) -> tuple[str, str]:
             .replace("__MODEL__", base64.b64encode(model).decode()))
     return text, f"{job.slug or 'model'}-app.html"
 
+
+_IMAGE_CODE = r"""// ---------------------------------------------------------------- the model
+
+function prepare(source, width, height) {
+  // The same steps as training: squash to a square, scale to 0-1, then normalise if it used a pretrained model.
+  const side = S.size, canvas = document.createElement("canvas");
+  canvas.width = side; canvas.height = side;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, 0, 0, width, height, 0, 0, side, side);
+  const pixels = context.getImageData(0, 0, side, side).data;
+  const plane = side * side, data = new Float32Array(S.channels * plane);
+  for (let i = 0; i < plane; i++) {
+    const r = pixels[i * 4] / 255, g = pixels[i * 4 + 1] / 255, b = pixels[i * 4 + 2] / 255;
+    const values = S.channels === 1 ? [0.299 * r + 0.587 * g + 0.114 * b] : [r, g, b];
+    values.forEach((value, c) => { data[c * plane + i] = S.mean ? (value - S.mean[c]) / S.std[c] : value; });
+  }
+  return new ort.Tensor("float32", data, [1, S.channels, side, side]);
+}
+
+async function run(tensor) {
+  const output = await session.run({ image: tensor });
+  return Array.from(output.logits.data);
+}
+
+async function answer(source, width, height) {
+  return ranked(await run(prepare(source, width, height)));
+}
+
+async function load() {
+  if (typeof ort === "undefined") { say("The model runner couldn't load. Connect to the internet once to open this page.", "bad"); return; }
+  ort.env.wasm.wasmPaths = "__RUNTIME__";
+  ort.env.wasm.numThreads = 1;
+  const bytes = await (await fetch(`data:application/octet-stream;base64,${document.getElementById("model").textContent.trim()}`)).arrayBuffer();
+  session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+  // A fixed pattern, run by PyTorch when the page was made, must give the same answer here.
+  const count = S.channels * S.size * S.size, pattern = new Float32Array(count);
+  for (let i = 0; i < count; i++) pattern[i] = Math.sin(i * 0.37);
+  const got = await run(new ort.Tensor("float32", pattern, [1, S.channels, S.size, S.size]));
+  const gap = Math.max(...got.map((v, i) => Math.abs(v - S.check[i]) / Math.max(1, Math.abs(S.check[i]))));
+  window.selfCheckGap = gap;
+  if (gap < 1e-3) say("✓ Model loaded and checked. It runs on this device.", "good");
+  else say("This model gave different answers here than when it was made, so its guesses may be wrong.", "bad");
+  $("camera").disabled = false;
+  $("choose").disabled = false;
+}
+
+"""
+
+_POSE_CODE = r"""// ---------------------------------------------------------------- the model
+
+// MediaPipe finds the points, then the network names the pose. Points are measured exactly as in training.
+const SEEN = 0.5, HAND_POINTS = 21;
+const HAND_LINES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
+const BODY_LINES = [[0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],[11,12],[11,13],[13,15],[15,17],[15,19],[15,21],[17,19],[12,14],[14,16],[16,18],[16,20],[16,22],[18,20],[11,23],[12,24],[23,24],[23,25],[24,26],[25,27],[26,28],[27,29],[28,30],[29,31],[30,32],[27,31],[28,32]];
+let finder = null;
+
+function scaled(points, width, height) {
+  const side = Math.max(width, height), sx = width / side, sy = height / side;
+  return points.map((p) => [p.x * sx, p.y * sy, p.z * sx]);
+}
+
+function bodyFeatures(points, width, height) {
+  const xyz = scaled(points, width, height), seen = points.map((p) => ((p.visibility || 0) > SEEN ? 1 : 0));
+  const centre = [0, 1, 2].map((k) => (xyz[11][k] + xyz[12][k]) / 2);
+  const moved = xyz.map((p) => p.map((v, k) => v - centre[k]));
+  let total = 0, count = 0;
+  moved.forEach((p, i) => { if (seen[i]) { total += p[0] * p[0] + p[1] * p[1]; count++; } });
+  const scale = Math.max(count ? Math.sqrt(total / count) : 1, 1e-3);
+  return Float32Array.from([...moved.flatMap((p, i) => p.map((v) => (v / scale) * seen[i])), ...seen]);
+}
+
+function handFeatures(hands) {
+  const parts = [];
+  for (const side of ["Left", "Right"]) {
+    const xyz = hands[side];
+    if (!xyz) { parts.push(...new Array(HAND_POINTS * 3 + 1).fill(0)); continue; }
+    const moved = xyz.map((p) => p.map((v, k) => v - xyz[0][k]));
+    const scale = Math.max(Math.max(...moved.map((p) => Math.sqrt(p[0] * p[0] + p[1] * p[1]))), 1e-3);
+    parts.push(...moved.flatMap((p) => p.map((v) => v / scale)), 1);
+  }
+  return Float32Array.from(parts);
+}
+
+function features(result, width, height) {
+  const found = result.landmarks || [];
+  if (!found.length) return null;
+  if (S.points === "body") return bodyFeatures(found[0], width, height);
+  const sides = result.handedness || result.handednesses || [], hands = {};
+  found.forEach((points, i) => {
+    let side = (sides[i] && sides[i][0] && sides[i][0].categoryName) || "Right";
+    if (hands[side]) side = side === "Right" ? "Left" : "Right";
+    hands[side] = scaled(points, width, height);
+  });
+  return handFeatures(hands);
+}
+
+function draw(result, element, width, height, mirrored) {
+  const canvas = $("overlay"), ratio = window.devicePixelRatio || 1, area = shownArea(element, width, height);
+  canvas.width = Math.round(area.frame.width * ratio);
+  canvas.height = Math.round(area.frame.height * ratio);
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const at = (p) => [area.left + (mirrored ? 1 - p.x : p.x) * area.width, area.top + p.y * area.height];
+  const visible = (p) => S.points === "hands" || (p.visibility || 0) >= SEEN;
+  for (const points of result.landmarks || []) {
+    context.strokeStyle = "#fff"; context.lineWidth = 2.5; context.lineCap = "round";
+    context.shadowColor = "rgba(0,0,0,.8)"; context.shadowBlur = 2;
+    for (const [a, b] of S.points === "hands" ? HAND_LINES : BODY_LINES) {
+      if (!points[a] || !points[b] || !visible(points[a]) || !visible(points[b])) continue;
+      context.beginPath(); context.moveTo(...at(points[a])); context.lineTo(...at(points[b])); context.stroke();
+    }
+    context.fillStyle = "#2f5fb8";
+    for (const p of points) { if (!visible(p)) continue; context.beginPath(); context.arc(...at(p), 3.5, 0, 2 * Math.PI); context.fill(); }
+  }
+}
+
+async function run(values) {
+  const output = await session.run({ features: new ort.Tensor("float32", values, [1, S.features]) });
+  return Array.from(output.logits.data);
+}
+
+async function answer(source, width, height, mirrored) {
+  const result = finder.detect(source);
+  draw(result, source, width, height, mirrored);
+  const values = features(result, width, height);
+  return values ? ranked(await run(values)) : null;
+}
+
+async function load() {
+  if (typeof ort === "undefined" || typeof Vision === "undefined") { say("The model runner couldn't load. Connect to the internet once to open this page.", "bad"); return; }
+  ort.env.wasm.wasmPaths = "__RUNTIME__";
+  ort.env.wasm.numThreads = 1;
+  const decode = async (id) => new Uint8Array(await (await fetch(`data:application/octet-stream;base64,${document.getElementById(id).textContent.trim()}`)).arrayBuffer());
+  session = await ort.InferenceSession.create(await decode("model"), { executionProviders: ["wasm"] });
+  // A fixed pattern, run by PyTorch when the page was made, must give the same answer here.
+  const pattern = Float32Array.from({ length: S.features }, (_, i) => Math.sin(i * 0.37));
+  const got = await run(pattern);
+  const gap = Math.max(...got.map((v, i) => Math.abs(v - S.check[i]) / Math.max(1, Math.abs(S.check[i]))));
+  // So must measuring a set of made-up points.
+  const measured = features(S.sample.result, S.sample.width, S.sample.height);
+  const pointGap = Math.max(...S.sample.features.map((v, i) => Math.abs(v - measured[i])));
+  window.selfCheckGap = Math.max(gap, pointGap);
+  say("Loading the model that finds the points…");
+  const files = await Vision.FilesetResolver.forVisionTasks("__VISION__wasm");
+  const options = { baseOptions: { modelAssetBuffer: await decode("finder"), delegate: "CPU" }, runningMode: "IMAGE" };
+  finder = S.points === "hands"
+    ? await Vision.HandLandmarker.createFromOptions(files, { ...options, numHands: 2 })
+    : await Vision.PoseLandmarker.createFromOptions(files, { ...options, numPoses: 1 });
+  if (window.selfCheckGap < 1e-3) say("✓ Model loaded and checked. It runs on this device.", "good");
+  else say("This model gave different answers here than when it was made, so its guesses may be wrong.", "bad");
+  $("camera").disabled = false;
+  $("choose").disabled = false;
+}
+
+"""
 
 _PAGE = r"""<!doctype html>
 <html lang="en">
@@ -124,6 +333,8 @@ _PAGE = r"""<!doctype html>
   .frame { position: relative; aspect-ratio: 4 / 3; background: #000; border-radius: var(--radius); overflow: hidden; }
   .frame video, .frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .frame video { transform: scaleX(-1); }
+  .frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .answers li.nothing:first-child { display: block; font-weight: 400; }
   .frame .note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; text-align: center; color: #fff; }
   .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   button, select, input { font: inherit; color: inherit; }
@@ -165,6 +376,7 @@ _PAGE = r"""<!doctype html>
       <div class="frame">
         <video id="video" muted playsinline aria-label="Camera"></video>
         <img id="photo" alt="The photo you chose" hidden>
+        <canvas id="overlay" aria-hidden="true"></canvas>
         <span class="note" id="note">Start the camera, or choose a photo.</span>
       </div>
       <div class="buttons">
@@ -188,7 +400,7 @@ _PAGE = r"""<!doctype html>
   </section>
 
   <footer class="muted small">
-    Made with AI Bricks. Photos are checked on this device and never uploaded, unless a rule sends a result to a web address you typed.
+    Made with AI Bricks. Photos and video are checked on this device and never uploaded, unless a rule sends a result to a web address you typed.
   </footer>
 </main>
 <div class="banner" id="banner" hidden role="alert"></div>
@@ -196,6 +408,7 @@ _PAGE = r"""<!doctype html>
 <script id="settings" type="application/json">__SETTINGS__</script>
 <script id="model" type="application/octet-stream">__MODEL__</script>
 <script src="__RUNTIME__ort.min.js" integrity="__INTEGRITY__" crossorigin="anonymous"></script>
+__EXTRA__
 <script>
 "use strict";
 const S = JSON.parse(document.getElementById("settings").textContent);
@@ -204,36 +417,12 @@ const FRAMES_TO_FIRE = 3;
 const COOLDOWN_MS = 2000;
 let session = null, stream = null, running = false;
 
-$("about").textContent = `Sorts photos into: ${S.labels.join(", ")}. Trained ${new Date(S.trainedAt * 1000).toLocaleDateString()}.`;
+$("about").textContent = `Sorts ${S.what} into: ${S.labels.join(", ")}. Trained ${new Date(S.trainedAt * 1000).toLocaleDateString()}.`;
 
 function say(text, tone) {
   const box = $("status");
   box.textContent = text;
   box.className = `small status ${tone || ""}`;
-}
-
-// ---------------------------------------------------------------- the model
-
-function prepare(source, width, height) {
-  // The same steps as training: squash to a square, scale to 0-1, then normalise if it used a pretrained model.
-  const side = S.size, canvas = document.createElement("canvas");
-  canvas.width = side; canvas.height = side;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  context.imageSmoothingQuality = "high";
-  context.drawImage(source, 0, 0, width, height, 0, 0, side, side);
-  const pixels = context.getImageData(0, 0, side, side).data;
-  const plane = side * side, data = new Float32Array(S.channels * plane);
-  for (let i = 0; i < plane; i++) {
-    const r = pixels[i * 4] / 255, g = pixels[i * 4 + 1] / 255, b = pixels[i * 4 + 2] / 255;
-    const values = S.channels === 1 ? [0.299 * r + 0.587 * g + 0.114 * b] : [r, g, b];
-    values.forEach((value, c) => { data[c * plane + i] = S.mean ? (value - S.mean[c]) / S.std[c] : value; });
-  }
-  return new ort.Tensor("float32", data, [1, S.channels, side, side]);
-}
-
-async function run(tensor) {
-  const output = await session.run({ image: tensor });
-  return Array.from(output.logits.data);
 }
 
 function ranked(logits) {
@@ -242,6 +431,14 @@ function ranked(logits) {
 }
 
 function show(answers) {
+  if (!answers) {
+    const row = document.createElement("li");
+    row.className = "nothing muted";
+    row.textContent = S.points === "hands" ? "No hands in view." : "No one in view.";
+    $("answers").replaceChildren(row);
+    check(null);
+    return;
+  }
   $("answers").replaceChildren(...answers.map((a) => {
     const row = document.createElement("li");
     row.innerHTML = `<span class="name"></span><span class="track"><span></span></span><span class="value"></span>`;
@@ -253,24 +450,13 @@ function show(answers) {
   check(answers[0]);
 }
 
-async function load() {
-  if (typeof ort === "undefined") { say("The model runner couldn't load. Connect to the internet once to open this page.", "bad"); return; }
-  ort.env.wasm.wasmPaths = "__RUNTIME__";
-  ort.env.wasm.numThreads = 1;
-  const bytes = await (await fetch(`data:application/octet-stream;base64,${document.getElementById("model").textContent.trim()}`)).arrayBuffer();
-  session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
-  // A fixed pattern, run by PyTorch when the page was made, must give the same answer here.
-  const count = S.channels * S.size * S.size, pattern = new Float32Array(count);
-  for (let i = 0; i < count; i++) pattern[i] = Math.sin(i * 0.37);
-  const got = await run(new ort.Tensor("float32", pattern, [1, S.channels, S.size, S.size]));
-  const gap = Math.max(...got.map((v, i) => Math.abs(v - S.check[i]) / Math.max(1, Math.abs(S.check[i]))));
-  window.selfCheckGap = gap;
-  if (gap < 1e-3) say("✓ Model loaded and checked. It runs on this device.", "good");
-  else say("This model gave different answers here than when it was made, so its guesses may be wrong.", "bad");
-  $("camera").disabled = false;
-  $("choose").disabled = false;
+// Where a picture shown with object-fit: contain really sits inside its frame.
+function shownArea(element, width, height) {
+  const box = element.getBoundingClientRect(), scale = Math.min(box.width / width, box.height / height);
+  return { left: (box.width - width * scale) / 2, top: (box.height - height * scale) / 2, width: width * scale, height: height * scale, frame: box };
 }
 
+__MODEL_CODE__
 // ---------------------------------------------------------------- camera and photos
 
 async function startCamera() {
@@ -296,6 +482,8 @@ function stopCamera() {
   stream && stream.getTracks().forEach((track) => track.stop());
   stream = null;
   $("camera").textContent = "Start camera";
+  const overlay = $("overlay");
+  overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
   $("note").hidden = false;
   $("note").textContent = "Camera off.";
   $("rate").textContent = "";
@@ -306,7 +494,7 @@ async function loop() {
   while (running) {
     const video = $("video");
     if (video.videoWidth && !document.hidden) {
-      show(ranked(await run(prepare(video, video.videoWidth, video.videoHeight))));
+      show(await answer(video, video.videoWidth, video.videoHeight, true));
       frames++;
       const now = performance.now();
       if (now - since > 1000) { $("rate").textContent = `About ${Math.round(frames / ((now - since) / 1000))} guesses a second.`; frames = 0; since = now; }
@@ -327,7 +515,7 @@ $("file").onchange = async () => {
   image.hidden = false;
   $("video").hidden = true;
   $("note").hidden = true;
-  show(ranked(await run(prepare(image, image.naturalWidth, image.naturalHeight))));
+  show(await answer(image, image.naturalWidth, image.naturalHeight, false));
 };
 
 // ---------------------------------------------------------------- rules
@@ -367,7 +555,7 @@ function fire(rule, answer) {
 
 function check(top) {
   for (const rule of rules) {
-    const sure = top.name === rule.category && top.chance * 100 >= rule.threshold;
+    const sure = !!top && top.name === rule.category && top.chance * 100 >= rule.threshold;
     rule.streak = sure ? (rule.streak || 0) + 1 : Math.min(0, (rule.streak || 0) - 1);
     // It fires once when it becomes sure, then waits until it has been unsure for a moment.
     if (rule.streak >= FRAMES_TO_FIRE && !rule.on && !(rule.last && performance.now() - rule.last < COOLDOWN_MS)) { rule.on = true; fire(rule, top); }
