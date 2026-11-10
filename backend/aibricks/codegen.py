@@ -6,6 +6,7 @@ import json
 import re
 from collections import Counter
 
+from . import augment as augmentation
 from .brick_sources import SOURCES
 from .catalogue import IMAGE, SERIES, TEXT, TRAINING_DIAL
 from .graph import Analysis, GraphIn, Shape, Step, parse_names
@@ -210,19 +211,15 @@ _BANNER = """# =================================================================
 _IMAGE_COMMON = '''
 IMAGE_SIZE = @@SIZE@@
 CHANNELS = @@CHANNELS@@
-AUGMENT = @@AUGMENT@@  # vary training photos: random crops, flips and light
+AUGMENT = @@AUGMENT@@  # vary the training photos, never the held-back ones
+VARY = @@VARY@@
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
+@@VARIED_STEPS@@
+
 def _image_transform(augment=False):
-    if augment:
-        steps = [
-            transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.7, 1.0), ratio=(0.85, 1.18)),
-            transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25),
-        ]
-    else:
-        steps = [transforms.Resize((IMAGE_SIZE, IMAGE_SIZE))]
+    steps = varied_steps(IMAGE_SIZE, VARY, transforms) if augment else [transforms.Resize((IMAGE_SIZE, IMAGE_SIZE))]
     if CHANNELS == 1:
         steps.append(transforms.Grayscale(1))
     steps.append(transforms.ToTensor())@@NORMALISE@@
@@ -500,7 +497,8 @@ def _data_py(analysis: Analysis) -> str:
             "    steps.append(transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))"
         ) if pretrained else ""
         augment = bool(socket.params.get("augment", False)) and task == "classify"
-        common = _fill(_IMAGE_COMMON, SIZE=socket.output.height, CHANNELS=socket.output.channels, NORMALISE=normalise, AUGMENT=augment)
+        common = _fill(_IMAGE_COMMON, SIZE=socket.output.height, CHANNELS=socket.output.channels, NORMALISE=normalise, AUGMENT=augment,
+                       VARY=repr(augmentation.settings_from(socket.params)), VARIED_STEPS=augmentation.SOURCE)
         if task == "classify":
             names = parse_names(head.params["classes"])
             banner = [

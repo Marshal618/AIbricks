@@ -747,3 +747,27 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
   .find-meaning { grid-column: 1 / -1; }
   .dataset-tabs .tab-gap { display: none; }
 }
+
+/* Previews of varied training photos */
+.augment-preview { display: flex; flex-direction: column; gap: 6px; }
+.augment-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.augment-grid figure { margin: 0; position: relative; }
+.augment-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; background: var(--surface-2); image-rendering: auto; }
+.augment-grid figure:first-child img { outline: 2px solid var(--accent); outline-offset: -2px; }
+.augment-grid figcaption { position: absolute; left: 3px; top: 3px; padding: 0 4px; border-radius: 3px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; }
+
+/* Spot what's unusual */
+.unusual-kinds { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.unusual-kinds li { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.unusual-kinds li:first-child { border-color: color-mix(in srgb, var(--pass) 40%, var(--line)); background: var(--pass-tint); }
+.unusual-photo { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.unusual-verdict { font-weight: 600; }
+.unusual-verdict.is-unusual { color: var(--fail); }
+.unusual-verdict.is-normal { color: var(--pass); }
+.unusual-line { display: flex; align-items: center; gap: 10px; }
+.unusual-line input { flex: 1; min-width: 0; }
+.unusual-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.unusual-stats div { display: flex; flex-direction: column; min-width: 0; }
+.unusual-stats dt { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-faint); }
+.unusual-stats dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .unusual-kinds, .unusual-stats { grid-template-columns: minmax(0, 1fr); } }

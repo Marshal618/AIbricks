@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import * as api from "./api";
 import { useEditor } from "./context";
 import { PortShape } from "./PortGlyph";
 import type { BrickNodeType, ParamValue, TrainingOverride } from "./types";
@@ -85,8 +87,13 @@ export function Inspector({ node, training, override, nodeCount, edgeCount, onTr
   const issues = analysis?.issues.filter((issue) => issue.node === node.id) ?? [];
   const typeName = (type: string) => catalogue.portTypes[type]?.name ?? type;
   const groupLabel = catalogue.groups.find((group) => group.id === brick.group)?.label;
-  const params = beginner ? brick.params.filter((param) => param.basic) : brick.params;
-  const hiddenSettings = brick.params.length - params.length;
+  const shown = (param: { shown_when: string | null }) => {
+    if (!param.shown_when) return true;
+    const switchParam = brick.params.find((other) => other.key === param.shown_when);
+    return Boolean(node.data.params[param.shown_when!] ?? switchParam?.default);
+  };
+  const params = (beginner ? brick.params.filter((param) => param.basic) : brick.params).filter(shown);
+  const hiddenSettings = brick.params.filter(shown).length - params.length;
   return (
     <div className="props">
       <div className="prop-kicker">{groupLabel}</div>
@@ -164,7 +171,53 @@ export function Inspector({ node, training, override, nodeCount, edgeCount, onTr
           </div>
         );
       })}
+      {brick.id === "image_folder" && Boolean(node.data.params.augment) && <AugmentPreview params={node.data.params} />}
       <button className="button button-danger" onClick={() => onDelete(node.id)}>Delete component</button>
+    </div>
+  );
+}
+
+/** Shows one of the person's photos and eight versions varied as training will vary them. */
+function AugmentPreview({ params }: { params: Record<string, ParamValue> }) {
+  const { datasetId } = useEditor();
+  const [result, setResult] = useState<{ original: string; varied: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const size = Number(params.image_size ?? 64);
+  const channels = Number(params.channels ?? 3);
+  const vary = Object.fromEntries(Object.entries(params).filter(([key]) => key.startsWith("vary_")).map(([key, value]) => [key, typeof value === "boolean" ? value : Number(value)]));
+  const key = JSON.stringify([datasetId, size, channels, vary]);
+  useEffect(() => { setResult(null); }, [key]);
+
+  const show = async () => {
+    if (!datasetId) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      setResult(await api.previewAugment(datasetId, size, channels, vary));
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "The examples couldn't be made.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="augment-preview field">
+      <div className="label-buttons" style={{ justifyContent: "flex-start", alignItems: "center" }}>
+        <button className="button button-small" disabled={!datasetId || busy} onClick={() => void show()}>{busy ? "Making examples…" : result ? "Show others" : "Preview with my photos"}</button>
+      </div>
+      {!datasetId && <small className="muted">Choose a dataset on the Train step to preview with your own photos.</small>}
+      {problem && <small className="tone-bad" role="alert">{problem}</small>}
+      {result && (
+        <>
+          <div className="augment-grid">
+            <figure><img src={result.original} alt="Your photo as the model sees it" /><figcaption>Yours</figcaption></figure>
+            {result.varied.map((image, index) => <figure key={index}><img src={image} alt={`Varied version ${index + 1}`} /></figure>)}
+          </div>
+          <small className="muted">Each time training shows this photo, it gets a new random version like these. Held-back photos stay as they are.</small>
+        </>
+      )}
     </div>
   );
 }

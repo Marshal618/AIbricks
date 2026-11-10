@@ -4,6 +4,7 @@ import { ExplainableText } from "./Explain";
 import { FindBetterModel } from "./Experiments";
 import { ModelApp } from "./ModelApp";
 import { TrainingCheck } from "./TrainingCheck";
+import { UnusualLine, UnusualTrainer, UnusualTry } from "./Unusual";
 import { Why } from "./Ui";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { CompareModels, ModelCardView } from "./ModelInsights";
@@ -449,6 +450,17 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
     }
   };
 
+  const startUnusual = async () => {
+    setProblem(null);
+    try {
+      await api.trainUnusualModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
   const startSound = async () => {
     setProblem(null);
     try {
@@ -474,6 +486,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
   const newestTable = models?.find((model) => model.task === "table" && model.status !== "running" && model.hasModel) ?? null;
   const newestPhoto = models?.find((model) => model.task === "image" && model.status === "finished" && model.hasModel) ?? null;
   const newestSound = models?.find((model) => model.task === "sound" && model.status === "finished" && model.hasModel) ?? null;
+  const newestUnusual = models?.find((model) => model.task === "anomaly" && model.status === "finished" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -491,7 +504,8 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
       <h2 className="section-title">Train</h2>
-      {dataset.kind === "image" && (
+      {dataset.goal === "unusual" && <UnusualTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startUnusual()} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "image" && dataset.goal !== "unusual" && (
         <div className="train-choices">
           <FindBetterModel dataset={dataset} beginner={beginner} busyElsewhere={busyElsewhere} onOpenDesign={onOpenDesign} onFinished={() => { void load(); onChanged(); }} />
           <section className="card">
@@ -504,7 +518,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
-      {(newestTable || newestPhoto || newestSound || newestText) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {(newestTable || newestPhoto || newestSound || newestText || newestUnusual) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {newestUnusual && <UnusualTry key={newestUnusual.id} model={newestUnusual} beginner={beginner} />}
+      {newestUnusual && <UnusualLine key={`line-${newestUnusual.id}`} model={newestUnusual} beginner={beginner} />}
       {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
       {newestPhoto && (
         <section className="card">

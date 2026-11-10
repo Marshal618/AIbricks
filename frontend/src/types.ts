@@ -12,6 +12,8 @@ export interface Param {
   max: number | null;
   choices: ParamValue[] | null;
   basic: boolean;
+  /** Shown only while this other on/off setting is on. */
+  shown_when: string | null;
 }
 
 export interface Port {
@@ -92,6 +94,8 @@ export interface DatasetSummary {
   licence: string;
   rows?: number;
   columns?: string[];
+  /** Photos only: "unusual" learns what normal looks like and spots what isn't. */
+  goal?: "sort" | "unusual";
 }
 
 export interface TableColumn {
@@ -117,11 +121,18 @@ export interface TableAnalysis {
 }
 
 export interface TableMetrics {
-  task: "category" | "number";
+  task: "category" | "number" | "unusual";
   repeatedRows: number;
   warnings: string[];
   importance: { name: string; share: number }[];
   total: number;
+  /** Spotting what's unusual: each held-back photo's unusualness, where 1 is the line. */
+  scores?: { file: string; actual: "Normal" | "Unusual"; unusualness: number }[];
+  auroc?: number | null;
+  falseAlarms?: number;
+  checkedNormal?: number;
+  caught?: number;
+  checkedUnusual?: number;
   accuracy?: number;
   baseline?: number;
   correct?: number;
@@ -194,7 +205,7 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number } | null;
-  task: "image" | "text" | "table" | "sound";
+  task: "image" | "text" | "table" | "sound" | "anomaly";
   metrics: TableMetrics | null;
   device: string;
   stage: "training" | "reviewing";
@@ -449,7 +460,7 @@ export interface Heatmap {
   height: number;
   /** Row by row, 0 to 1, where 1 is where the model looked most. */
   values: number[];
-  method: "gradcam" | "gradients";
+  method: "gradcam" | "gradients" | "patchcore";
   category: string;
 }
 

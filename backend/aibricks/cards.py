@@ -24,11 +24,13 @@ METHODS = {
     "text": "A fine-tuned sentence model (sentence-transformers/all-MiniLM-L6-v2), trained on pairs of examples as in the "
             "SetFit method, with a logistic regression that picks the category.",
     "table": "Gradient-boosted decision trees (scikit-learn's HistGradientBoosting).",
+    "anomaly": "Learns from normal photos only, following PatchCore (Roth et al., 2022): patch features from a pretrained "
+               "ResNet-18 are kept as a memory, and a photo is unusual when its least normal patch is far from all of them.",
     "sound": "A frozen pretrained Audio Spectrogram Transformer (MIT/ast-finetuned-audioset-10-10-0.4593) reading 1-second "
              "spectrograms, with a linear classifier trained on each clip and two time-shifted, louder or quieter copies.",
 }
-THINGS = {"image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
-THING = {"image": "photo", "text": "text", "table": "row", "sound": "clip"}
+THINGS = {"anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
+THING = {"anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
 class CardNotes(BaseModel):

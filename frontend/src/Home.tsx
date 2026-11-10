@@ -22,6 +22,7 @@ const KIND = {
   text: { name: "Text", className: "is-text" },
   table: { name: "Spreadsheet", className: "is-table" },
   sound: { name: "Sound", className: "is-sound" },
+  anomaly: { name: "Unusual photos", className: "is-image" },
 } as const;
 
 const STATUS: Record<string, { name: string; className: string; mark: string }> = {
@@ -49,7 +50,7 @@ function ago(seconds: number) {
   return new Date(seconds * 1000).toLocaleDateString();
 }
 
-function KindTag({ kind }: { kind: DatasetSummary["kind"] }) {
+function KindTag({ kind }: { kind: keyof typeof KIND }) {
   return <span className={`kind-tag ${KIND[kind].className}`}>{KIND[kind].name}</span>;
 }
 

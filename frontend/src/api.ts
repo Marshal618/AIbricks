@@ -270,9 +270,19 @@ export async function fetchSavedDataset(id: string): Promise<DatasetSummary> {
   return response.json();
 }
 
-export async function createDataset(name: string, kind: DatasetSummary["kind"], categories: string[]): Promise<DatasetSummary> {
-  return sendJson("/api/datasets", { name, kind, categories });
+export async function createDataset(name: string, kind: DatasetSummary["kind"], categories: string[], goal: "sort" | "unusual" = "sort"): Promise<DatasetSummary> {
+  return sendJson("/api/datasets", { name, kind, categories, goal });
 }
+
+export async function trainUnusualModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-unusual`);
+}
+
+export async function setUnusualLine(job: string, factor: number): Promise<{ factor: number }> {
+  return putJson(`/api/models/${job}/unusual`, { factor });
+}
+
+export const fetchUnusualSettings = (job: string): Promise<{ factor: number }> => getJson(`/api/models/${job}/unusual`);
 
 async function putJson(path: string, body: unknown) {
   const response = await fetch(path, {
@@ -444,4 +454,8 @@ export async function startExperiment(dataset: string, minutes: number): Promise
 export async function stopExperiment(dataset: string) {
   const response = await fetch(`/api/datasets/${dataset}/experiments`, { method: "DELETE" });
   if (!response.ok) throw new Error(await errorMessage(response));
+}
+
+export async function previewAugment(dataset: string, size: number, channels: number, params: Record<string, boolean | number>): Promise<{ original: string; varied: string[] }> {
+  return sendJson("/api/augment/preview", { dataset, size, channels, params });
 }
