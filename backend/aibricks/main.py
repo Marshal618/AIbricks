@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table", "sound", "anomaly"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -250,6 +250,8 @@ async def predict_live(job_id: str, request: Request, explain: bool = False) -> 
         reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
     except training.TrainingError as error:
         raise _raise(error) from None
+    if "boxes" in reply or "points" in reply:
+        return reply  # a detector's boxes and counts, or the body and hand points a pose model found
     return reply if explain else {"answers": reply["answers"]}
 
 
@@ -672,6 +674,20 @@ def train_unusual(dataset_id: str) -> dict:
         raise _raise(error) from None
 
 
+@app.post("/api/datasets/{dataset_id}/train-pose", dependencies=[Depends(_needs_json)])
+def train_pose(dataset_id: str) -> dict:
+    """Learns to sort the body poses or hand signs in a “sort poses” dataset's photos."""
+    try:
+        return {"job": training.public(poses.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/pose-mistakes")
+def pose_mistakes(job_id: str) -> dict:
+    return _dataset_reply(poses.mistakes, job_id)
+
+
 class UnusualLine(BaseModel):
     factor: float
 
@@ -684,6 +700,51 @@ def unusual_settings(job_id: str) -> dict:
 @app.put("/api/models/{job_id}/unusual")
 def move_unusual_line(job_id: str, request: UnusualLine) -> dict:
     return _dataset_reply(anomaly.set_factor, job_id, request.factor)
+
+
+class BoxesIn(BaseModel):
+    boxes: list[dict[str, str | float]] = Field(max_length=finder.MAX_BOXES)
+
+
+class SureIn(BaseModel):
+    sure: float
+
+
+@app.get("/api/datasets/{dataset_id}/boxes")
+def list_boxes(dataset_id: str) -> dict:
+    """Every photo in a “find things” dataset, with the boxes drawn on those that are done."""
+    return _dataset_reply(finder.listing, dataset_id)
+
+
+@app.put("/api/datasets/{dataset_id}/boxes/{image_id}")
+def save_boxes(dataset_id: str, image_id: str, request: BoxesIn) -> dict:
+    """Saves one photo's boxes. An empty list means there's nothing to find in it."""
+    return _dataset_reply(finder.save_boxes, dataset_id, image_id, request.boxes)
+
+
+@app.delete("/api/datasets/{dataset_id}/boxes/{image_id}")
+def clear_boxes(dataset_id: str, image_id: str) -> dict:
+    _dataset_reply(finder.clear_boxes, dataset_id, image_id)
+    return {"ok": True}
+
+
+@app.post("/api/datasets/{dataset_id}/train-find", dependencies=[Depends(_needs_json)])
+def train_find(dataset_id: str) -> dict:
+    """Fine-tunes a pretrained detector on a “find things” dataset's boxed photos."""
+    try:
+        return {"job": training.public(finder.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/find")
+def find_settings(job_id: str) -> dict:
+    return _dataset_reply(finder.details, job_id)
+
+
+@app.put("/api/models/{job_id}/find")
+def set_find_sureness(job_id: str, request: SureIn) -> dict:
+    return _dataset_reply(finder.set_sure, job_id, request.sure)
 
 
 @app.post("/api/models/{job_id}/slices", dependencies=[Depends(_needs_json)])

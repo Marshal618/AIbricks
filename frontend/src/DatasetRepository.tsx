@@ -6,8 +6,10 @@ import { ModelApp } from "./ModelApp";
 import { WhereItFails } from "./Slices";
 import { TrainingCheck } from "./TrainingCheck";
 import { UnusualLine, UnusualTrainer, UnusualTry } from "./Unusual";
+import { FindResults, FindTrainer, FindTry } from "./Find";
 import { Why } from "./Ui";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
+import { PoseResults, PoseTrainer, PoseTry } from "./Pose";
 import { CompareModels, ModelCardView } from "./ModelInsights";
 import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
@@ -462,6 +464,28 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
     }
   };
 
+  const startFind = async () => {
+    setProblem(null);
+    try {
+      await api.trainFindModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
+  const startPose = async () => {
+    setProblem(null);
+    try {
+      await api.trainPoseModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
   const startSound = async () => {
     setProblem(null);
     try {
@@ -488,6 +512,8 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
   const newestPhoto = models?.find((model) => model.task === "image" && model.status === "finished" && model.hasModel) ?? null;
   const newestSound = models?.find((model) => model.task === "sound" && model.status === "finished" && model.hasModel) ?? null;
   const newestUnusual = models?.find((model) => model.task === "anomaly" && model.status === "finished" && model.hasModel) ?? null;
+  const newestFind = models?.find((model) => model.task === "detect" && model.status === "finished" && model.hasModel) ?? null;
+  const newestPose = models?.find((model) => model.task === "pose" && model.status === "finished" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -506,7 +532,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
       <h2 className="section-title">Train</h2>
       {dataset.goal === "unusual" && <UnusualTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startUnusual()} onStop={(id) => void stop(id)} />}
-      {dataset.kind === "image" && dataset.goal !== "unusual" && (
+      {dataset.goal === "find" && <FindTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startFind()} onStop={(id) => void stop(id)} />}
+      {dataset.goal === "pose" && <PoseTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startPose()} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "image" && (dataset.goal ?? "sort") === "sort" && (
         <div className="train-choices">
           <FindBetterModel dataset={dataset} beginner={beginner} busyElsewhere={busyElsewhere} onOpenDesign={onOpenDesign} onFinished={() => { void load(); onChanged(); }} />
           <section className="card">
@@ -519,7 +547,11 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
-      {(newestTable || newestPhoto || newestSound || newestText || newestUnusual) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {(newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {newestPose && <PoseTry key={newestPose.id} model={newestPose} kind={newestPose.metrics?.points ?? dataset.points ?? "body"} beginner={beginner} />}
+      {newestPose && <PoseResults key={`r-${newestPose.id}`} model={newestPose} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
+      {newestFind && <FindTry key={newestFind.id} model={newestFind} beginner={beginner} />}
+      {newestFind && <FindResults key={`r-${newestFind.id}`} model={newestFind} datasetId={dataset.id} beginner={beginner} />}
       {newestUnusual && <UnusualTry key={newestUnusual.id} model={newestUnusual} beginner={beginner} />}
       {newestUnusual && <UnusualLine key={`line-${newestUnusual.id}`} model={newestUnusual} beginner={beginner} />}
       {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
@@ -573,7 +605,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
                   {" · "}{when(model.startedAt)}
                   {model.metrics?.task === "number"
                     ? ` · typical error; always guessing the average would be off by ${(model.metrics.baselineMae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                    : model.best ? ` · guessing would score ${Math.round((model.metrics?.baseline ?? model.baseline) * 100)}%` : ""}
+                    : model.best && model.task !== "detect" ? ` · guessing would score ${Math.round((model.metrics?.baseline ?? model.baseline) * 100)}%` : ""}
                   {model.review ? ` · ${model.review.correct} of ${model.review.total} held-back right` : ""}
                   {model.hasModel ? ` · ${megabytes(model.modelBytes)}` : ""}
                   {model.modelRemoved ? " · model file removed to save space" : ""}

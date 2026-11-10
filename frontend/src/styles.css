@@ -781,3 +781,54 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
 .fail-examples img { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; background: var(--surface-2); }
 .fail-advice { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .fail-advice span { flex: 1 1 220px; }
+
+/* ---------------------------------------------------------------- finding things in photos */
+.find-stage { position: relative; display: inline-block; justify-self: start; align-self: start; width: fit-content; max-width: 100%; vertical-align: top; border-radius: var(--radius); overflow: hidden; background: var(--surface-2); user-select: none; -webkit-user-select: none; touch-action: none; cursor: crosshair; }
+.find-stage img { display: block; max-width: 100%; max-height: 62vh; pointer-events: none; }
+.find-stage.is-result { cursor: default; touch-action: auto; }
+.find-box { position: absolute; border: 2px solid var(--box); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
+.find-box.is-dashed { border-style: dashed; }
+.find-box.is-drawing { border-style: dashed; pointer-events: none; }
+.find-box.is-selected { border-width: 3px; background: color-mix(in srgb, var(--box) 18%, transparent); }
+.find-box.is-expected { border: 2px dashed #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7); pointer-events: none; }
+.find-stage:not(.is-result) .find-box:not(.is-drawing) { cursor: pointer; }
+.find-box-tag { position: absolute; top: 0; left: 0; display: inline-flex; align-items: center; gap: 2px; padding: 0 5px; background: var(--box); color: #fff; font-size: 11px; font-weight: 600; line-height: 16px; white-space: nowrap; border-radius: 0 0 3px 0; }
+.find-box-tag button { padding: 0 2px; border: 0; background: none; color: inherit; font-size: 14px; line-height: 14px; cursor: pointer; }
+.find-swatch { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; background: var(--box); }
+.find-chip kbd { margin: 0 0 0 6px; }
+.find-actions { justify-content: flex-start; flex-wrap: wrap; align-items: center; }
+.find-actions kbd { margin: 0 0 0 6px; background: transparent; color: inherit; border-color: currentColor; opacity: 0.75; }
+.find-strip { display: flex; gap: 6px; margin: 0; padding: 0 0 6px; list-style: none; overflow-x: auto; }
+.find-strip button { position: relative; display: block; width: 64px; height: 48px; padding: 0; border: 2px solid transparent; border-radius: 6px; overflow: hidden; background: var(--surface-2); cursor: pointer; }
+.find-strip img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.find-strip button.is-done img { opacity: 0.5; }
+.find-strip button.is-current { border-color: var(--accent); }
+.find-strip-mark { position: absolute; right: 3px; bottom: 3px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 10px; }
+.find-counts { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.find-counts li { display: flex; align-items: center; gap: 4px; }
+.find-count { margin-left: auto; font-size: 22px; font-variant-numeric: tabular-nums; }
+.find-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.find-table th, .find-table td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.find-table td { font-variant-numeric: tabular-nums; }
+.find-checked-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 8px; }
+.find-checked { margin: 0; }
+.find-checked .find-stage img { max-height: 170px; }
+.find-checked figcaption { margin-top: 4px; }
+.find-key { display: inline-block; width: 14px; height: 10px; margin: 0 4px 0 12px; border: 2px solid var(--accent); vertical-align: middle; }
+.find-key.is-expected { margin-left: 0; border: 2px dashed var(--ink-soft); }
+
+/* Sort poses and hand signs */
+.pose-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.8)); }
+.pose-layer.is-mirrored { transform: scaleX(-1); }
+.pose-bone { stroke: #ffffff; stroke-width: 2.5px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.pose-joint { stroke: var(--accent); stroke-width: 7px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.pose-photo { display: grid; grid-template-columns: minmax(0, auto) minmax(200px, 1fr); gap: 16px; align-items: start; }
+.pose-photo .find-stage img { max-height: 360px; }
+.pose-tips { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.pose-nothing { padding: 8px 10px; border-radius: var(--radius); background: var(--surface-2); }
+.pose-thumb { display: block; width: 100%; aspect-ratio: 4 / 3; margin-bottom: 4px; border-radius: var(--radius); background: var(--surface-2); object-fit: cover; }
+.pose-removed { display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 4 / 3; margin-bottom: 4px; border-radius: var(--radius); background: var(--surface-2); }
+.pose-move { max-width: 100%; font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+@media (max-width: 640px) {
+  .pose-photo { grid-template-columns: minmax(0, 1fr); }
+}

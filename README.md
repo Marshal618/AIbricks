@@ -123,6 +123,20 @@ It follows PatchCore (Roth et al., 2022), which reached 99% on the MVTec AD fact
 
 The line between normal and unusual comes from the training photos only: each half is scored against a memory of the other half, to see how far unseen normal photos usually are. That keeps the held-back photos for an honest check. **How strict should it be?** moves the line and shows the false alarms and catches on the held-back photos at each position. The webcam, photo checks and downloads follow the line you choose.
 
+## Find things in photos
+
+When creating a photo dataset, choose **Find and count things in photos** to make a model that draws a box around each thing it finds and counts them. Name the things to find, add photos (from files or the webcam), then drag a box around every one on **Add data**. Save with Enter; keys 1 to 9 pick the thing. A photo with nothing in it can be marked **Nothing to find here**, which teaches it what not to find. Once a model exists, **Let the model draw first** fills in its guesses as dashed boxes for you to fix.
+
+It fine-tunes a Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained on the COCO photos by torchvision. The first run downloads it, about 75 MB. Training needs 10 done photos and 5 boxes of each thing; aim for 30 boxes of each. A fifth of the photos are held back and checked: how many things it found, how many it missed, its false alarms and the standard mAP@50 score, with the photos it got wrong shown with both your boxes and its own. **Try it** draws live boxes and counts on the webcam, and a slider sets how sure it must be before it draws a box. Versions keep the boxes, so any model can be traced to the exact boxes it learned from.
+
+## Sort poses and hand signs
+
+When creating a photo dataset, choose **Sort body poses or hand signs**, then whether it should look at the whole body or at hands. Add categories, such as Arms up and Squat, or Thumbs up and Peace, and take photos of each, most easily with the webcam. Add a category for doing nothing in particular, so it has an answer when you aren't making any of the others.
+
+MediaPipe (Google, Apache 2.0) finds 33 points on a body, or 21 on each hand, on this computer. The points are measured from the shoulders or the wrist, in units of the body's or hand's size, so where someone stands and how far away they are don't matter. A small network then learns which category the points make. Because it learns from points, not pixels, clothes, light and background don't get in the way, and a few dozen photos are often enough. Training takes seconds. The first run downloads MediaPipe's point-finding model, about 6 MB for bodies or 8 MB for hands, and every trained model keeps its own copy, so the downloaded project works offline.
+
+**Try it** draws the points it finds on a photo or the live webcam, with its answers. When no body or hand is in view, it says so instead of guessing. Photos where nothing could be seen are left out of learning and reported. The held-back photos it got wrong can be moved to another category or removed. The label check and **Find a better model** don't apply to poses, as both look at whole photos.
+
 ## Where it fails
 
 Under the newest photo model on the **Train** tab, **Where it fails** looks for kinds of photos the model gets wrong much more often than others, and names them in everyday words, such as “dark photo” or “close-up”. Each group shows how often it's wrong compared with overall, the mix-up it makes most, example photos and what to do, with buttons to add photos or change training.

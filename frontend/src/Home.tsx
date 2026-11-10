@@ -23,6 +23,8 @@ const KIND = {
   table: { name: "Spreadsheet", className: "is-table" },
   sound: { name: "Sound", className: "is-sound" },
   anomaly: { name: "Unusual photos", className: "is-image" },
+  pose: { name: "Poses", className: "is-image" },
+  detect: { name: "Find things", className: "is-image" },
 } as const;
 
 const STATUS: Record<string, { name: string; className: string; mark: string }> = {

@@ -89,6 +89,13 @@ def _current_items(dataset: str, meta: dict, extra=()) -> Items:
         with closing(labelling._database(dataset)) as database:
             return [list(row) for row in database.execute("SELECT id, label FROM items WHERE removed = 0 ORDER BY seq")]
     items = []
+    if meta.get("goal") == "find":
+        from . import finder  # Imported here, because finder imports this module.
+        boxes = finder.read_boxes(dataset)
+        for name in finder.photos(dataset):
+            things = sorted({box["category"] for box in boxes.get(name, [])})
+            items += [[name, thing] for thing in things] or [[name, None]]
+        return sorted(items, key=lambda item: (item[0], item[1] or ""))
     if meta["kind"] == "sound":
         from . import sounds  # Imported here, because sounds imports this module.
         for name in dict.fromkeys([*meta["categories"], *extra]):
@@ -178,7 +185,7 @@ def _store(dataset: str, meta: dict, items: Items, number: int) -> None:
     for item_id, label in items:
         target = objects / item_id
         if not target.exists():
-            folder = labelling.inbox(dataset) if label is None else training._category_folder(label, dataset)
+            folder = labelling.inbox(dataset) if label is None or meta.get("goal") == "find" else training._category_folder(label, dataset)
             _link(folder / item_id, target)
 
 
@@ -197,9 +204,27 @@ def _save(dataset: str, meta: dict, index: dict, items: Items, message: str, aut
     if meta["kind"] == "table":
         version["columns"] = meta.get("columns", [])
     _write_json(_folder(dataset) / f"{number}.json", items)
+    if meta.get("goal") == "find":
+        from . import finder
+        _write_json(_folder(dataset) / f"{number}.boxes.json", finder.read_boxes(dataset))
     index = {"next": number + 1, "head": number, "versions": [*index["versions"], version]}
     _write_json(_folder(dataset) / "index.json", index)
     return version
+
+
+def _saved_boxes(dataset: str, number: int) -> dict:
+    try:
+        return json.loads((_folder(dataset) / f"{number}.boxes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _boxes_changed(dataset: str, meta: dict, index: dict) -> bool:
+    """Boxes can move without the things in a photo changing, which the item list alone wouldn't show."""
+    if meta.get("goal") != "find" or not _head(index):
+        return False
+    from . import finder
+    return finder.read_boxes(dataset) != _saved_boxes(dataset, _head(index)["number"])
 
 
 def overview(dataset: str) -> dict:
@@ -212,7 +237,7 @@ def overview(dataset: str) -> dict:
         "versions": index["versions"][::-1],
         "head": head["number"] if (head := _head(index)) else None,
         "unsaved": changes,
-        "canSave": bool(items) if changes is None else _has_changes(changes),
+        "canSave": bool(items) if changes is None else _has_changes(changes) or _boxes_changed(dataset, meta, index),
     }
 
 
@@ -226,7 +251,7 @@ def save(dataset: str, message: str) -> dict:
         items, changes = _since_head(dataset, meta, index)
         if changes is None and not items:
             raise TrainingError(422, "Add some examples before saving a version.")
-        if changes is not None and not _has_changes(changes):
+        if changes is not None and not _has_changes(changes) and not _boxes_changed(dataset, meta, index):
             raise TrainingError(409, f"Nothing has changed since v{_head(index)['number']}.")
         return _save(dataset, meta, index, items, " ".join(message.split())[:MAX_MESSAGE], False)
 
@@ -237,7 +262,7 @@ def save_before_change(dataset: str, message: str) -> int | None:
         meta = datasets._read(dataset)
         index = _index(dataset)
         items, changes = _since_head(dataset, meta, index)
-        if items and (changes is None or _has_changes(changes)):
+        if items and (changes is None or _has_changes(changes) or _boxes_changed(dataset, meta, index)):
             return _save(dataset, meta, index, items, message, True)["number"]
         return None
 
@@ -269,7 +294,7 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
         meta = datasets._read(dataset)
         index = _index(dataset)
         items, changes = _since_head(dataset, meta, index, names)
-        if changes is None or _has_changes(changes):
+        if changes is None or _has_changes(changes) or _boxes_changed(dataset, meta, index):
             version = _save(dataset, meta, index, items, "Saved automatically for training", True)
         else:
             version = _head(index)
@@ -278,6 +303,9 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
             _link(_table_copy(dataset, version["number"]), run / "data" / "table.csv")
         elif meta["kind"] == "text":
             _freeze_text(dataset, names, items, run)
+        elif meta.get("goal") == "find":
+            from . import finder
+            finder.freeze(dataset, run)
         else:
             target = run / "data" / ("sounds" if meta["kind"] == "sound" else "images")
             objects = _folder(dataset) / "objects"
@@ -360,7 +388,12 @@ def restore(dataset: str, number: int) -> dict:
         if changes is None or _has_changes(changes):
             saved_first = _save(dataset, meta, index, current, f"Saved automatically before restoring v{number}", True)["number"]
             index = _index(dataset)
-        if meta["kind"] in ("image", "sound"):
+        if meta.get("goal") == "find":
+            from . import finder
+            photos = sorted({item_id for item_id, _ in items})
+            _restore_images(dataset, current, [[item_id, None] for item_id in photos])
+            finder.write_boxes(dataset, _saved_boxes(dataset, number))
+        elif meta["kind"] in ("image", "sound"):
             _restore_images(dataset, current, items)
         elif meta["kind"] == "table":
             _restore_table(dataset, number)

@@ -94,8 +94,11 @@ export interface DatasetSummary {
   licence: string;
   rows?: number;
   columns?: string[];
-  /** Photos only: "unusual" learns what normal looks like and spots what isn't. */
-  goal?: "sort" | "unusual";
+  /** Photos only: "unusual" learns what normal looks like and spots what isn't; "find" draws boxes around things;
+   * "pose" sorts the body poses or hand signs in photos. */
+  goal?: "sort" | "unusual" | "find" | "pose";
+  /** Sorting poses only: the points of a whole body, or of hands. */
+  points?: "body" | "hands";
 }
 
 export interface TableColumn {
@@ -121,7 +124,20 @@ export interface TableAnalysis {
 }
 
 export interface TableMetrics {
-  task: "category" | "number" | "unusual";
+  task: "category" | "number" | "unusual" | "detect" | "pose";
+  /** Sorting poses: photos where no body or hands could be seen, which it couldn't learn from or answer. */
+  points?: "body" | "hands";
+  nothingFoundTraining?: number;
+  nothingFoundChecking?: number;
+  trainedOn?: number;
+  /** Finding things: boxes found, missed and found where there was nothing, on held-back photos. */
+  photos?: number;
+  found?: number;
+  missed?: number;
+  allRight?: number;
+  map50?: number | null;
+  perCategory?: Record<string, { found: number; missed: number; falseAlarms: number }>;
+  photosChecked?: CheckedPhoto[];
   repeatedRows: number;
   warnings: string[];
   importance: { name: string; share: number }[];
@@ -204,9 +220,12 @@ export interface SavedModel {
   datasetVersion: number | null;
   modelBytes: number;
   startedAt: number;
-  review: { total: number; correct: number } | null;
-  task: "image" | "text" | "table" | "sound" | "anomaly";
+  review: { total: number; correct: number; categories?: Record<string, { correct: number; total: number }> } | null;
+  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose";
   metrics: TableMetrics | null;
+  totalEpochs?: number;
+  trainCount?: number;
+  checkCount?: number;
   device: string;
   stage: "training" | "reviewing";
   stepsDone: number;
@@ -593,4 +612,43 @@ export interface FailureSearch {
   overall?: number;
   slices?: FailureSlice[];
   error?: string;
+}
+
+/** A box around one thing, as shares of the photo's width and height. */
+export interface Box {
+  category: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** How sure the model is, on boxes the model drew. */
+  chance?: number;
+}
+
+export interface BoxedPhoto {
+  id: string;
+  /** null until the photo is done; an empty list means nothing to find in it. */
+  boxes: Box[] | null;
+}
+
+export interface FoundBoxes {
+  boxes: Box[];
+  counts: Record<string, number>;
+}
+
+export interface CheckedPhoto {
+  file: string;
+  real: Box[];
+  found: Box[];
+  right: number;
+  missed: number;
+  falseAlarms: number;
+}
+
+/** What a pose model saw in one photo: the points it found, as 0-1 shares of the photo, and its answers. */
+export interface PoseAnswer {
+  found: boolean;
+  answers: PredictAnswer[];
+  /** One list per body or hand, of [x, y, how sure it is the point is in view]. */
+  points: [number, number, number][][];
 }

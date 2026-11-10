@@ -114,6 +114,9 @@ def overview(dataset: str) -> dict:
         for label in labels:
             counts[label] += 1
     labelled = len(current)
+    if meta.get("goal") == "find":
+        from . import finder
+        counts, labelled, _ = finder.counts(meta)
     result = _read(_folder(dataset) / "result.json", None)
     reviews = _read(_folder(dataset) / "reviews.json", {})
 
@@ -166,6 +169,15 @@ def overview(dataset: str) -> dict:
 
 
 def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, open_pairs) -> tuple[int, list[str]]:
+    if meta.get("goal") == "find":
+        from . import finder  # Imported here, because finder imports datasets, which imports this module.
+        problems = finder.readiness(meta)
+        if problems:
+            return 0, problems
+        short = [name for name, amount in counts.items() if amount < finder.SUGGESTED_BOXES]
+        if short:
+            return 1, [f"Draw boxes until each thing has {finder.SUGGESTED_BOXES}, in the different places and light it will see. Short: {', '.join(short)}."]
+        return 2, ["The label check sorts photos into categories, so it doesn't apply to finding things yet."]
     if meta.get("goal") == "unusual":
         # Only normal photos are learned from, so they're what needs to be plentiful.
         normal = counts.get("Normal", 0)
@@ -191,6 +203,8 @@ def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, op
         steps.append(f"Resolve {len(conflicts)} example{'s' if len(conflicts) != 1 else ''} filed under more than one category.")
     if steps:
         return 1, steps
+    if meta.get("goal") == "pose":
+        return 2, ["The label check looks at whole photos, not poses, so this is the highest level a pose dataset can reach for now."]
     if meta["kind"] == "sound":
         return 2, ["The label check isn't available for sound yet, so this is the highest level a sound dataset can reach for now."]
     if result is None:
@@ -211,7 +225,7 @@ def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, op
 def start(dataset: str) -> dict:
     global _job
     meta = datasets._read(dataset)
-    if meta["kind"] in ("table", "sound") or meta.get("goal") == "unusual":
+    if meta["kind"] in ("table", "sound") or meta.get("goal") in ("unusual", "find", "pose"):
         raise TrainingError(422, "The label check is for photo and text datasets that sort into categories.")
     with _lock, training._lock:
         if is_checking():
