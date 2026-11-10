@@ -771,3 +771,13 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
 .unusual-stats dt { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-faint); }
 .unusual-stats dd { margin: 0; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
 @media (max-width: 640px) { .unusual-kinds, .unusual-stats { grid-template-columns: minmax(0, 1fr); } }
+
+/* Where it fails */
+.fail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.fail-list li { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--fail) 25%, var(--line)); border-radius: var(--radius); background: var(--fail-tint); }
+.fail-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.fail-rate { font-size: 13px; font-variant-numeric: tabular-nums; }
+.fail-examples { display: flex; gap: 6px; flex-wrap: wrap; }
+.fail-examples img { width: 64px; height: 64px; object-fit: cover; border-radius: 4px; background: var(--surface-2); }
+.fail-advice { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.fail-advice span { flex: 1 1 220px; }

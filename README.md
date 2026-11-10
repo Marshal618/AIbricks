@@ -123,6 +123,12 @@ It follows PatchCore (Roth et al., 2022), which reached 99% on the MVTec AD fact
 
 The line between normal and unusual comes from the training photos only: each half is scored against a memory of the other half, to see how far unseen normal photos usually are. That keeps the held-back photos for an honest check. **How strict should it be?** moves the line and shows the false alarms and catches on the held-back photos at each position. The webcam, photo checks and downloads follow the line you choose.
 
+## Where it fails
+
+Under the newest photo model on the **Train** tab, **Where it fails** looks for kinds of photos the model gets wrong much more often than others, and names them in everyday words, such as “dark photo” or “close-up”. Each group shows how often it's wrong compared with overall, the mix-up it makes most, example photos and what to do, with buttons to add photos or change training.
+
+It follows the idea of Domino (Eyuboglu et al., ICLR 2022). CLIP, an open model that understands photos and short phrases together, describes every held-back photo. Similar photos are grouped, with mistakes counted a little so that groups of mistakes stand out. A group is named by the phrase that fits it best compared with all the other photos. The names are a good guess, so check them against the examples: Domino named groups exactly right about a third of the time. It needs at least 6 held-back mistakes, and it runs on this computer. The first time downloads CLIP, about 600 MB.
+
 ## Training check
 
 After a photo model trains, the **Training check** reads its loss chart and names what it sees in plain words: memorising the training photos, too simple to learn, unstable steps, still improving when it stopped, or healthy. Each finding offers fixes. On the Train step of the Model builder, **Vary training photos**, **Learn more slowly** and **Train for longer** change your design and take you to the test.
@@ -206,6 +212,7 @@ PYTHONPATH=. .venv/bin/pytest tests -q
 - `backend/aibricks/runner.py` runs the test in a separate, time-limited process.
 - `backend/aibricks/training.py` stores your images and runs training and predictions.
 - `backend/aibricks/anomaly.py` learns what normal looks like, and `augment.py` varies training photos.
+- `backend/aibricks/slices.py` finds and names groups of photos a model gets wrong.
 - `backend/aibricks/experiments.py` runs Find a better model, and `checkup.py` makes the training check.
 - `backend/aibricks/sounds.py` stores sound clips and trains the sound sorter.
 - `backend/aibricks/explain.py` makes the heatmaps and word weights that show where a model looked.

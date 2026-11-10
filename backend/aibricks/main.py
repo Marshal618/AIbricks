@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, sounds, experiments, system, tables, textmodels, training, versions, webapp
+from . import anomaly, augment, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp
 
 
 @contextlib.asynccontextmanager
@@ -684,6 +684,17 @@ def unusual_settings(job_id: str) -> dict:
 @app.put("/api/models/{job_id}/unusual")
 def move_unusual_line(job_id: str, request: UnusualLine) -> dict:
     return _dataset_reply(anomaly.set_factor, job_id, request.factor)
+
+
+@app.post("/api/models/{job_id}/slices", dependencies=[Depends(_needs_json)])
+def find_where_it_fails(job_id: str) -> dict:
+    """Looks for groups of held-back photos the model gets wrong far more often, and names them."""
+    return _dataset_reply(slices.start, job_id)
+
+
+@app.get("/api/models/{job_id}/slices")
+def where_it_fails(job_id: str) -> dict:
+    return _dataset_reply(slices.status, job_id)
 
 
 class ExperimentRequest(BaseModel):

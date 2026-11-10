@@ -570,3 +570,27 @@ export interface Experiment {
   error: string | null;
   skipped: string[];
 }
+
+export interface FailureSlice {
+  name: string;
+  also: string[];
+  kind: string;
+  size: number;
+  wrong: number;
+  rate: number;
+  confusion: { actual: string; guess: string; times: number };
+  examples: { file: string; category: string; guess: string }[];
+  advice: string;
+  action: "vary" | "photos";
+}
+
+export interface FailureSearch {
+  status: "none" | "running" | "finished" | "failed";
+  stage?: "loading" | "looking";
+  enough?: boolean;
+  held?: number;
+  mistakes?: number;
+  overall?: number;
+  slices?: FailureSlice[];
+  error?: string;
+}

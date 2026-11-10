@@ -1,4 +1,4 @@
-import type { Experiment, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -459,3 +459,11 @@ export async function stopExperiment(dataset: string) {
 export async function previewAugment(dataset: string, size: number, channels: number, params: Record<string, boolean | number>): Promise<{ original: string; varied: string[] }> {
   return sendJson("/api/augment/preview", { dataset, size, channels, params });
 }
+
+export const fetchFailures = (job: string): Promise<FailureSearch> => getJson(`/api/models/${job}/slices`);
+
+export async function findFailures(job: string): Promise<FailureSearch> {
+  return sendJson(`/api/models/${job}/slices`);
+}
+
+export const datasetPhotoUrl = (dataset: string, category: string, file: string) => `/api/datasets/${dataset}/preview/${file}?${new URLSearchParams({ category })}`;

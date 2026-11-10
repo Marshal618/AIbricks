@@ -3,6 +3,7 @@ import * as api from "./api";
 import { ExplainableText } from "./Explain";
 import { FindBetterModel } from "./Experiments";
 import { ModelApp } from "./ModelApp";
+import { WhereItFails } from "./Slices";
 import { TrainingCheck } from "./TrainingCheck";
 import { UnusualLine, UnusualTrainer, UnusualTry } from "./Unusual";
 import { Why } from "./Ui";
@@ -411,8 +412,8 @@ function TextMistakes({ model, dataset, beginner, onChanged }: { model: SavedMod
   );
 }
 
-export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDesign }: {
-  dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void; onOpenDesign: (graph: GraphPayload) => void;
+export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDesign, onAddData }: {
+  dataset: DatasetSummary; beginner: boolean; onBuild: () => void; onChanged: () => void; onOpenDesign: (graph: GraphPayload) => void; onAddData: () => void;
 }) {
   const [models, setModels] = useState<SavedModel[] | null>(null);
   const [known, setKnown] = useState<Set<number>>(new Set());
@@ -535,6 +536,16 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
           findings={newestPhoto.checkup}
           available={["experiment"]}
           onFix={() => document.querySelector(".find-better")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+        />
+      )}
+      {newestPhoto && (
+        <WhereItFails
+          key={`fails-${newestPhoto.id}`}
+          model={newestPhoto}
+          datasetId={dataset.id}
+          beginner={beginner}
+          onAddPhotos={onAddData}
+          onVary={() => document.querySelector(".find-better")?.scrollIntoView({ behavior: "smooth", block: "center" })}
         />
       )}
       {newestSound && <SoundTry key={newestSound.id} model={newestSound} beginner={beginner} />}

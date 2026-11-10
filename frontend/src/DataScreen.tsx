@@ -326,7 +326,7 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild, onOpenDes
         {tab === "overview" && <DatasetOverview dataset={dataset} beginner={beginner} onSaved={setDataset} onLabel={() => setTab("label")} />}
         {tab === "health" && <DataHealthTab dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
         {tab === "versions" && <DatasetVersions dataset={dataset} beginner={beginner} onRestored={setDataset} />}
-        {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} onChanged={() => void load()} onOpenDesign={(graph) => onOpenDesign(graph, dataset.id)} />}
+        {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} onChanged={() => void load()} onOpenDesign={(graph) => onOpenDesign(graph, dataset.id)} onAddData={() => setTab("label")} />}
 
         {tab === "label" && dataset.kind === "table" && <TableData dataset={dataset} beginner={beginner} onChanged={setDataset} onTrain={() => setTab("models")} />}
 
