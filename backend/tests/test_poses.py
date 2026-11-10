@@ -1,18 +1,23 @@
 """Sort poses and hand signs: MediaPipe finds the points, and a small network learns the categories."""
+import base64
 import hashlib
 import importlib.util
 import io
+import json
+import math
+import re
 import time
 import urllib.request
 
 import numpy as np
+import onnxruntime
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageEnhance
 from test_text_models import CACHE
 from test_training import BINARY, workspace  # noqa: F401
 
-from aibricks import poses
+from aibricks import poses, webapp
 from aibricks.main import app
 
 client = TestClient(app)
@@ -171,3 +176,17 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     import zipfile
     names = zipfile.ZipFile(io.BytesIO(download.content)).namelist()
     assert any(name.endswith("model/points.task") for name in names) and any(name.endswith("model/weights.pt") for name in names)
+
+    # The web app carries both models, and its network answers exactly as PyTorch did.
+    page = client.get(f"/api/train/{job['id']}/app")
+    assert page.status_code == 200, page.text
+    text = page.text
+    assert f'integrity="{webapp.VISION_INTEGRITY}"' in text and "<title>Hand signs</title>" in text
+    settings = json.loads(re.search(r'<script id="settings" type="application/json">(.*?)</script>', text, re.S).group(1))
+    assert settings["kind"] == "pose" and settings["points"] == "hands" and settings["labels"] == sorted(SIGNS) and settings["what"] == "hand signs"
+    finder = base64.b64decode(re.search(r'<script id="finder" type="application/octet-stream">(.*?)</script>', text, re.S).group(1))
+    assert hashlib.sha256(finder).hexdigest() == "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1"
+    network = onnxruntime.InferenceSession(base64.b64decode(re.search(r'<script id="model" type="application/octet-stream">(.*?)</script>', text, re.S).group(1)))
+    pattern = np.array([[math.sin(i * 0.37) for i in range(settings["features"])]], dtype=np.float32)
+    assert np.allclose(network.run(None, {"features": pattern})[0][0], settings["check"], atol=1e-4)
+    assert len(settings["sample"]["features"]) == settings["features"]

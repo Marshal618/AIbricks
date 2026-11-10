@@ -3,6 +3,7 @@ import * as api from "./api";
 import type { DatasetSummary, PoseAnswer, SavedModel, TrainingMistake } from "./types";
 import { Why } from "./Ui";
 import { CameraView, grab, useCamera } from "./Webcam";
+import { ModelApp } from "./ModelApp";
 
 export const POSE_MINIMUM = 2;
 export const POSE_TOTAL = 10;
@@ -248,6 +249,7 @@ export function PoseTry({ model, kind, beginner }: { model: SavedModel; kind: "b
       </div>
       {chosen && <PosePhoto key={chosen.src} jobId={model.id} file={chosen.file} src={chosen.src} kind={kind} />}
       <LivePose jobId={model.id} kind={kind} beginner={beginner} />
+      <ModelApp jobId={model.id} beginner={beginner} pose example={`beep when it sees ${Object.keys(model.categories)[0] ?? (kind === "hands" ? "a thumbs up" : "arms up")}`} />
     </section>
   );
 }
