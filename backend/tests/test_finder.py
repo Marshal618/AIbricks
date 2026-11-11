@@ -172,9 +172,11 @@ def test_it_learns_to_find_the_squares(workspace):  # noqa: F811
     # The accurate detector is too big for a web page.
     app_page = client.get(f"/api/train/{job['id']}/app")
     assert app_page.status_code == 422 and "fast detector" in app_page.json()["detail"]["message"]
+    kit = client.get(f"/api/train/{job['id']}/pi")
+    assert kit.status_code == 422 and "too big and slow for a Raspberry Pi" in kit.json()["detail"]["message"]
 
 
-def test_the_fast_detector_learns_and_becomes_an_app(workspace):  # noqa: F811
+def test_the_fast_detector_learns_and_becomes_an_app(workspace, tmp_path):  # noqa: F811
     dataset, truth = create(16)
     box_all(dataset, truth)
     assert client.post(f"/api/datasets/{dataset}/train-find", params={"detector": "tiny"}, headers=JSON).status_code == 422
@@ -213,4 +215,15 @@ def test_the_fast_detector_learns_and_becomes_an_app(workspace):  # noqa: F811
     top = len(settings["check"]["scores"])
     assert np.allclose(got_scores[:top], settings["check"]["scores"], atol=1e-4)
     assert np.allclose(got_boxes[:top].reshape(-1), settings["check"]["boxes"], atol=1e-2)
+
+    # So does its Raspberry Pi kit, which counts the squares and uses the sureness set in the app.
+    import pi_kit
+    folder, _ = pi_kit.unpack(client.get(f"/api/train/{job['id']}/pi"), tmp_path)
+    assert json.loads((folder / "settings.json").read_text())["sure"] == 0.7
+    code, out, err = pi_kit.run(folder, "--check")
+    assert code == 0 and "✓" in out, err
+    (tmp_path / "squares.png").write_bytes(data)
+    counted = pi_kit.answers(folder, tmp_path / "squares.png")
+    assert [(a["name"], a["count"]) for a in counted] == [("Square", 3)], counted
+    assert pi_kit.run(folder, "--photo", tmp_path / "squares.png")[1].strip().endswith("Square × 3")
     assert webapp.RUNTIME_INTEGRITY in page.text and webapp.VISION_URL not in page.text

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi
 
 
 @contextlib.asynccontextmanager
@@ -283,6 +283,16 @@ def model_app(job_id: str, download: bool = False) -> Response:
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{name}"'
     return Response(text, media_type="text/html; charset=utf-8", headers=headers)
+
+
+@app.get("/api/train/{job_id}/pi")
+def model_pi_kit(job_id: str) -> Response:
+    """A zip that runs this model on a Raspberry Pi's camera, with rules that switch its pins."""
+    try:
+        data, name = pi.kit(job_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @app.get("/api/train/{job_id}/mistakes/{index}")

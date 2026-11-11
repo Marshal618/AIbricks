@@ -83,7 +83,7 @@ def test_only_finished_photo_models_become_apps(trained, monkeypatch):
     monkeypatch.setattr(job, "task", "text")
     monkeypatch.setattr(training, "stored", lambda job_id: job)
     reply = client.get(f"/api/train/{trained}/app")
-    assert reply.status_code == 422 and "photo models" in reply.json()["detail"]["message"]
+    assert reply.status_code == 422 and "photo model" in reply.json()["detail"]["message"]
 
 
 def test_names_cant_break_out_of_the_page(trained):
@@ -94,3 +94,53 @@ def test_names_cant_break_out_of_the_page(trained):
     assert "<script>alert(1)" not in page
     settings, _ = parts(page)
     assert settings["name"] == job.projectName
+
+
+def test_the_raspberry_pi_kit_runs_by_itself(trained, tmp_path):
+    import pi_kit
+    folder, files = pi_kit.unpack(client.get(f"/api/train/{trained}/pi"), tmp_path)
+    assert folder.name == "colours-pi"
+    assert files == {"model.onnx", "settings.json", "run.py", "setup.sh", "requirements.txt", "README.md"}
+    assert "mediapipe" not in (folder / "requirements.txt").read_text()
+    readme = (folder / "README.md").read_text()
+    assert "# Colours on a Raspberry Pi" in readme and "--when Red --pin 17" in readme
+
+    code, out, err = pi_kit.run(folder, "--check")
+    assert code == 0 and "✓" in out, err
+    # It gives the same chances as the app does on this computer.
+    for colour, seed in ((RED, 410), (BLUE, 411)):
+        photo = tmp_path / f"{seed}.png"
+        photo.write_bytes(picture(colour, seed))
+        got = {a["name"]: a["chance"] for a in pi_kit.answers(folder, photo)}
+        for answer in client.post(f"/api/train/{trained}/predict", content=photo.read_bytes(), headers=BINARY).json()["answers"]:
+            assert got[answer["category"]] == pytest.approx(answer["chance"], abs=1e-3)
+    code, out, _ = pi_kit.run(folder, "--photo", photo)
+    assert code == 0 and out.startswith(f"{photo}: Blue ")
+
+    # Rules need something to watch for, and a name it knows.
+    code, _, err = pi_kit.run(folder, "--pin", "17")
+    assert code != 0 and "--when" in err
+    code, _, err = pi_kit.run(folder, "--when", "Green", "--pin", "17")
+    assert code != 0 and "Red, Blue" in err
+
+    # A model that converted wrongly says so.
+    settings = json.loads((folder / "settings.json").read_text())
+    settings["check"] = [value + 1 for value in settings["check"]]
+    (folder / "settings.json").write_text(json.dumps(settings))
+    code, _, err = pi_kit.run(folder, "--check")
+    assert code != 0 and "different answers" in err
+
+
+def test_the_rule_switches_on_and_off_steadily(trained, tmp_path, monkeypatch):
+    import importlib.util
+    import pi_kit
+    folder, _ = pi_kit.unpack(client.get(f"/api/train/{trained}/pi"), tmp_path)
+    monkeypatch.chdir(folder)
+    spec = importlib.util.spec_from_file_location("kit_run", folder / "run.py")
+    run = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run)
+    rule = run.Rule("Red", None, None, 5)
+    seen = [True, False, True, True, True, False, False, True, False, False, False]
+    changes = [rule.update(s) for s in seen]
+    assert changes == [None, None, None, "→ Red: on", None, None, None, None, None, None, "→ Red: off"]
+    assert run.is_seen([("Red", 0.9, 1)], "Red", 0.7) and not run.is_seen([("Red", 0.6, 1)], "Red", 0.7)

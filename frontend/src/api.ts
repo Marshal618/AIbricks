@@ -455,6 +455,7 @@ export async function listen(job: string, recording: Blob, explain: boolean): Pr
 export const fetchSoundMistakes = (job: string): Promise<{ mistakes: SoundMistake[]; total: number }> => getJson(`/api/models/${job}/sound-mistakes`);
 
 export const modelAppUrl = (id: string, download = false) => `/api/train/${id}/app${download ? "?download=true" : ""}`;
+export const piKitUrl = (id: string) => `/api/train/${id}/pi`;
 
 export const fetchExperiment = (dataset: string): Promise<{ experiment: Experiment | null; budgets: number[]; changes: Record<string, { label: string; description: string }> }> =>
   getJson(`/api/datasets/${dataset}/experiments`);

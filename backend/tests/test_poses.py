@@ -204,3 +204,19 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     pattern = np.array([[math.sin(i * 0.37) for i in range(settings["features"])]], dtype=np.float32)
     assert np.allclose(network.run(None, {"features": pattern})[0][0], settings["check"], atol=1e-4)
     assert len(settings["sample"]["features"]) == settings["features"]
+
+    # The Raspberry Pi kit carries both models too, measures points the same way and names the signs.
+    import pi_kit
+    folder, files = pi_kit.unpack(client.get(f"/api/train/{job['id']}/pi"), tmp_path)
+    assert files == {"model.onnx", "points.task", "settings.json", "run.py", "setup.sh", "requirements.txt", "README.md"}
+    assert "mediapipe" in (folder / "requirements.txt").read_text()
+    code, out, err = pi_kit.run(folder, "--check")
+    assert code == 0 and "✓" in out, err
+    for category, image in images.items():
+        path = tmp_path / f"{category}.png"
+        path.write_bytes(variant(image, 500))
+        assert pi_kit.answers(folder, path)[0]["name"] == category
+    nothing = tmp_path / "blank.png"
+    nothing.write_bytes(blank.getvalue())
+    assert pi_kit.answers(folder, nothing) == []
+    assert pi_kit.run(folder, "--photo", nothing)[1].strip().endswith("No hands in view.")
