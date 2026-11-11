@@ -88,8 +88,10 @@ There are three screens:
   own data doesn't. Only public, ungated datasets with a readable category column work. Model
   downloads include `DATA_SOURCES.md`, which credits what was imported. Check each licence yourself.
 - **Labelling by keyboard.** Unsorted photos and text can be sorted quickly: number keys choose a
-  category, S skips, X removes and Z undoes. Once a model is trained, **Suggest labels** has it
-  guess the rest, starting with the photos it's least sure about, so you only confirm or correct.
+  category, S skips, X removes and Z undoes. Once a model is trained, **Suggest labels** has the
+  dataset's newest model guess the rest, starting with the ones it's least sure about, so you only
+  confirm or correct with Enter. It works for photo, pose and text datasets. Sound clips are filed as
+  they're recorded, so there's nothing left to suggest for.
 
 ### Data levels and the label check
 

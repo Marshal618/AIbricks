@@ -275,16 +275,21 @@ export interface LabelItem {
   suggestion?: { category: string; chance: number } | null;
 }
 
-export interface ImageQueue {
-  items: LabelItem[];
-  total: number;
+/** How the dataset's newest model can help label what's left. */
+export interface LabelAssist {
   unsuggested: number;
   suggesting: boolean;
   suggestError: string | null;
+  /** The categories of the model that makes suggestions, or null when there's no such model yet. */
   modelCategories: string[] | null;
 }
 
-export interface TextQueue {
+export interface ImageQueue extends LabelAssist {
+  items: LabelItem[];
+  total: number;
+}
+
+export interface TextQueue extends LabelAssist {
   items: LabelItem[];
   total: number;
   counts: Record<string, number>;

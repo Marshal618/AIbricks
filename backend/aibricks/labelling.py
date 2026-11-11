@@ -80,32 +80,65 @@ def add_image(data: bytes, dataset: str = training.DEFAULT_DATASET) -> dict:
     return {"duplicate": False}
 
 
-def _suggestions(dataset: str = training.DEFAULT_DATASET) -> dict:
-    """The saved suggestions, if they came from the model that exists now."""
-    job = training.latest("image")
+def _text_suggestions_file(dataset: str = training.DEFAULT_DATASET) -> Path:
+    return training.root(dataset) / "text" / "suggestions.json"
+
+
+def _meta(dataset: str) -> dict:
+    if dataset == training.DEFAULT_DATASET:
+        return {"kind": "image"}
+    from . import datasets  # imported here because datasets imports this module
+    return datasets._read(dataset)
+
+
+def _suggester(dataset: str, meta: dict | None = None) -> training.Job | None:
+    """The newest finished model on this dataset that can sort what's waiting: a photo, pose or text model."""
+    meta = meta or _meta(dataset)
+    task = "text" if meta["kind"] == "text" else "pose" if meta.get("goal") == "pose" else "image" if meta["kind"] == "image" and meta.get("goal", "sort") == "sort" else None
+    if task is None:
+        return None
+    for job in training._saved_jobs():
+        if job.dataset == dataset and job.task == task and job.status == "finished" and job.hasModel:
+            return job
+    return None
+
+
+def _suggestions(dataset: str, path: Path, job: training.Job | None) -> dict:
+    """The saved suggestions, if they came from the model that would make them now.
+
+    A value of None means the model looked but couldn't answer, such as a photo with no one in it.
+    """
     try:
-        saved = json.loads(_suggestions_file(dataset).read_text(encoding="utf-8"))
+        saved = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return saved["answers"] if job is not None and saved.get("jobId") == job.id and job.dataset == dataset else {}
+    return saved["answers"] if job is not None and saved.get("jobId") == job.id else {}
+
+
+def _first_least_sure(ids: list[str], answers: dict) -> list[str]:
+    """Suggested items first, starting with the model's least sure, because they teach it the most."""
+    return sorted(ids, key=lambda item: (not answers.get(item), (answers.get(item) or {}).get("chance", 0)))
+
+
+def _assist(job: training.Job | None, answers: dict, ids: list[str]) -> dict:
+    return {
+        "unsuggested": sum(item not in answers for item in ids),
+        "suggesting": _suggesting,
+        "suggestError": _suggest_error,
+        "modelCategories": sorted(job.categories) if job is not None else None,
+    }
 
 
 def queue(dataset: str = training.DEFAULT_DATASET) -> dict:
     """Lists what's left. Suggested images come first, starting with the model's least sure."""
-    answers = _suggestions(dataset)
+    job = _suggester(dataset)
+    answers = _suggestions(dataset, _suggestions_file(dataset), job)
     folder = inbox(dataset)
-    ids = [path.name for path in folder.iterdir() if _IMAGE_ID.match(path.name)] if folder.is_dir() else []
-    ids.sort(key=lambda image_id: (image_id not in answers, answers.get(image_id, {}).get("chance", 0), image_id))
-    job = training.latest("image")
-    usable = job is not None and job.hasModel and job.status != "running" and job.dataset == dataset
+    ids = _first_least_sure(sorted(path.name for path in folder.iterdir() if _IMAGE_ID.match(path.name)) if folder.is_dir() else [], answers)
     return {
         "items": [{"id": image_id, "suggestion": answers.get(image_id)} for image_id in ids[:MAX_QUEUE]],
         "total": len(ids),
-        "unsuggested": sum(image_id not in answers for image_id in ids),
-        "suggesting": _suggesting,
-        "suggestError": _suggest_error,
-        "modelCategories": sorted(job.categories) if usable else None,
-    }
+    } | _assist(job, answers, ids)
 
 
 def image_file(image_id: str, dataset: str = training.DEFAULT_DATASET) -> Path:
@@ -181,43 +214,98 @@ def is_suggesting() -> bool:
     return _suggesting
 
 
-def _run_suggestions(job: training.Job, folder: Path, images: Path, dataset: str) -> None:
+# Runs in a pose model's folder: its answer for each photo, or None when no one could be seen.
+_POSE_SUGGEST = """
+import contextlib, json, sys
+from pathlib import Path
+sys.path.insert(0, '.')
+with contextlib.redirect_stdout(sys.stderr):
+    from model import PoseSorter, load_image
+    sorter = PoseSorter()
+answers = {}
+for path in sorted(Path(sys.argv[1]).iterdir()):
+    try:
+        found = sorter.check(load_image(path))
+    except Exception:
+        continue
+    answers[path.name] = found['answers'][0] if found['found'] else None
+print(json.dumps(answers))
+"""
+
+# Runs in a text model's folder. It reads [id, text] pairs and answers them in batches.
+_TEXT_SUGGEST = """
+import contextlib, json, sys
+sys.path.insert(0, '.')
+with contextlib.redirect_stdout(sys.stderr):
+    from model import answers, load
+    encoder, head, labels = load()
+rows = json.loads(sys.stdin.read())
+found = {}
+for start in range(0, len(rows), 64):
+    batch = rows[start:start + 64]
+    for (item, _), result in zip(batch, answers(encoder, head, labels, [text for _, text in batch])):
+        found[item] = result[0]
+print(json.dumps(found))
+"""
+
+
+def _run_suggestions(job: training.Job, command: list[str], given: str | None, path: Path) -> None:
     global _suggesting, _suggest_error
+    folder = training._folder(job)
     try:
         done = subprocess.run(
-            training._python_command("predict.py", "--folder", str(images.resolve()), "--json"),
-            cwd=folder, env=training._environment(folder), stdin=subprocess.DEVNULL,
+            command, cwd=folder, env=training._environment(folder), input=given, stdin=None if given is not None else subprocess.DEVNULL,
             capture_output=True, text=True, errors="replace", timeout=SUGGEST_LIMIT_SECONDS,
         )
         if done.returncode != 0:
             lines = [line for line in done.stderr.splitlines() if line.strip()]
-            raise ValueError(lines[-1][:600] if lines else "The model could not read the images.")
-        answers = {}
-        for row in json.loads(done.stdout.strip().splitlines()[-1]):
-            best = row["answers"][0]
-            answers[Path(row["file"]).name] = {"category": best["category"], "chance": best["chance"]}
-        temporary = _suggestions_file(dataset).with_suffix(".partial")
+            raise ValueError(lines[-1][:600] if lines else "The model could not read them.")
+        reply = json.loads(done.stdout.strip().splitlines()[-1])
+        if isinstance(reply, list):  # a photo model's predict.py lists every file with its answers
+            reply = {Path(row["file"]).name: row["answers"][0] for row in reply}
+        answers = {item: None if best is None else {"category": best["category"], "chance": best["chance"]} for item, best in reply.items()}
+        temporary = path.with_suffix(".partial")
         temporary.write_text(json.dumps({"jobId": job.id, "answers": answers}), encoding="utf-8")
-        os.replace(temporary, _suggestions_file(dataset))
-    except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, IndexError) as problem:
+        os.replace(temporary, path)
+    except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, IndexError, TypeError) as problem:
         _suggest_error = f"The model couldn't make suggestions: {problem}"
     finally:
         _suggesting = False
 
 
+def _inline(script: str, *arguments: str) -> list[str]:
+    import sys
+    return [sys.executable, "-I", "-u", "-c", script, *arguments]
+
+
 def start_suggestions(dataset: str = training.DEFAULT_DATASET) -> None:
+    """Has the dataset's newest model guess a category for everything still unsorted."""
     global _suggesting, _suggest_error
     with training._lock:
         if _suggesting:
             raise TrainingError(409, "Suggestions are already being made.")
-        job = training.latest("image")
-        if job is None or not job.hasModel or job.status == "running" or job.dataset != dataset:
+        if training.is_running():
+            raise TrainingError(409, "Wait for training to finish. Both need this computer's full attention.")
+        meta = _meta(dataset)
+        job = _suggester(dataset, meta)
+        if job is None:
             raise TrainingError(409, "Train a model on this dataset first. It makes the suggestions.")
-        if not inbox(dataset).is_dir():
-            raise TrainingError(409, "There are no unsorted images to suggest labels for.")
+        if meta["kind"] == "text":
+            with closing(_database(dataset)) as database:
+                rows = database.execute("SELECT id, text FROM items WHERE label IS NULL AND removed = 0").fetchall()
+            if not rows:
+                raise TrainingError(409, "There's no unsorted text to suggest labels for.")
+            command, given, path = _inline(_TEXT_SUGGEST), json.dumps(rows), _text_suggestions_file(dataset)
+        else:
+            images = inbox(dataset)
+            if not images.is_dir() or not any(images.iterdir()):
+                raise TrainingError(409, "There are no unsorted images to suggest labels for.")
+            folder = str(images.resolve())
+            command = _inline(_POSE_SUGGEST, folder) if job.task == "pose" else training._python_command("predict.py", "--folder", folder, "--json")
+            given, path = None, _suggestions_file(dataset)
+        path.parent.mkdir(parents=True, exist_ok=True)
         _suggesting, _suggest_error = True, None
-        folder = training._folder(job)
-    threading.Thread(target=_run_suggestions, args=(job, folder, inbox(dataset), dataset), daemon=True).start()
+    threading.Thread(target=_run_suggestions, args=(job, command, given, path), daemon=True).start()
 
 
 # ------------------------------------------------------------------------ text
@@ -292,19 +380,35 @@ def import_texts(rows: list[tuple[str, str]], dataset: str = training.DEFAULT_DA
     return outcomes
 
 
-def text_queue(categories: list[str], dataset: str = training.DEFAULT_DATASET) -> dict:
+def text_queue(categories: list[str], dataset: str = training.DEFAULT_DATASET, assist: bool = True) -> dict:
+    """What's left to label. With suggestions, the texts the model is least sure about come first."""
+    job = _suggester(dataset) if assist else None
+    answers = _suggestions(dataset, _text_suggestions_file(dataset), job) if job is not None else {}
     with closing(_database(dataset)) as database:
-        rows = database.execute(
-            "SELECT id, text FROM items WHERE label IS NULL AND removed = 0 ORDER BY seq LIMIT ?", (MAX_QUEUE,)
-        ).fetchall()
-        total = database.execute("SELECT COUNT(*) FROM items WHERE label IS NULL AND removed = 0").fetchone()[0]
         counts = dict(database.execute("SELECT label, COUNT(*) FROM items WHERE label IS NOT NULL AND removed = 0 GROUP BY label").fetchall())
-    return {
-        "items": [{"id": item_id, "text": text} for item_id, text in rows],
+        if answers:
+            ids = _first_least_sure([row[0] for row in database.execute("SELECT id FROM items WHERE label IS NULL AND removed = 0 ORDER BY seq")], answers)
+            texts = texts_by_id(ids[:MAX_QUEUE], dataset)
+            rows = [(item_id, texts[item_id]["text"]) for item_id in ids[:MAX_QUEUE] if item_id in texts]
+            total = len(ids)
+        else:
+            rows = database.execute(
+                "SELECT id, text FROM items WHERE label IS NULL AND removed = 0 ORDER BY seq LIMIT ?", (MAX_QUEUE,)
+            ).fetchall()
+            total = database.execute("SELECT COUNT(*) FROM items WHERE label IS NULL AND removed = 0").fetchone()[0]
+            ids = None
+    reply = {
+        "items": [{"id": item_id, "text": text, "suggestion": answers.get(item_id)} for item_id, text in rows],
         "total": total,
         "counts": {name: counts.get(name, 0) for name in categories},
         "otherLabels": sum(amount for name, amount in counts.items() if name not in categories),
     }
+    if assist:
+        if ids is None:
+            with closing(_database(dataset)) as database:
+                ids = [row[0] for row in database.execute("SELECT id FROM items WHERE label IS NULL AND removed = 0")] if job is not None else []
+        reply |= _assist(job, answers, ids)
+    return reply
 
 
 def texts_by_id(ids: list[str], dataset: str) -> dict[str, dict]:
@@ -357,6 +461,7 @@ def clear_text_label(name: str, dataset: str = training.DEFAULT_DATASET) -> None
 def clear_text(dataset: str = training.DEFAULT_DATASET) -> None:
     with closing(_database(dataset)) as database, database:
         database.execute("DELETE FROM items")
+    _text_suggestions_file(dataset).unlink(missing_ok=True)
 
 
 def export_text(categories: list[str], dataset: str = training.DEFAULT_DATASET) -> str:

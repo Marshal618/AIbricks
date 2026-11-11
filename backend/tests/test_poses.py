@@ -169,6 +169,20 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     nothing = client.post(f"/api/train/{job['id']}/predict-live", content=blank.getvalue(), headers=BINARY).json()
     assert nothing == {"found": False, "answers": [], "points": []}
 
+    # Unsorted photos get suggestions from the pose model; a photo with no hands gets none.
+    client.post("/api/label/images", params={"dataset": dataset}, content=variant(images["Victory"], 700), headers=BINARY)
+    empty = io.BytesIO()
+    Image.new("RGB", (320, 240), (200, 180, 150)).save(empty, "PNG")
+    client.post("/api/label/images", params={"dataset": dataset}, content=empty.getvalue(), headers=BINARY)
+    assert client.post("/api/label/suggest", params={"dataset": dataset}, headers=JSON).status_code == 200
+    deadline = time.time() + 120
+    while client.get("/api/label/images", params={"dataset": dataset}).json()["suggesting"] and time.time() < deadline:
+        time.sleep(0.3)
+    queue = client.get("/api/label/images", params={"dataset": dataset}).json()
+    assert queue["suggestError"] is None and queue["unsuggested"] == 0 and queue["modelCategories"] == sorted(SIGNS)
+    suggestions = [item["suggestion"] for item in queue["items"]]
+    assert suggestions[0]["category"] == "Victory" and suggestions[1] is None
+
     card = client.get(f"/api/models/{job['id']}/card")
     assert card.status_code == 200 and "MediaPipe" in card.text
     download = client.get(f"/api/train/{job['id']}/download")

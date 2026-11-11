@@ -174,3 +174,31 @@ def test_stopping_and_failing_leave_no_model(monkeypatch):
     train(dataset)
     failed = wait()
     assert failed["status"] == "failed" and "base model" in failed["error"]
+
+
+def test_the_model_suggests_labels_for_unsorted_text(workspace):  # noqa: F811
+    dataset = fill()
+    queue = client.get("/api/label/text", params={"dataset": dataset}).json()
+    assert queue["modelCategories"] is None and queue["unsuggested"] == 0
+    assert client.post("/api/label/suggest", params={"dataset": dataset}, headers=JSON).status_code == 409  # no model yet
+    train(dataset)
+    assert wait()["status"] == "finished"
+    unsorted = ["an absolutely wonderful happy time", "a horrible awful experience", "lovely kind and charming people"]
+    client.post("/api/label/text", params={"dataset": dataset, "kind": "lines"}, content="\n".join(unsorted).encode(), headers=BINARY)
+    queue = client.get("/api/label/text", params={"dataset": dataset}).json()
+    assert queue["modelCategories"] == ["Bad", "Good"] and queue["unsuggested"] == 3
+    assert client.post("/api/label/suggest", params={"dataset": dataset}, headers=JSON).status_code == 200
+    deadline = time.time() + 120
+    while client.get("/api/label/text", params={"dataset": dataset}).json()["suggesting"] and time.time() < deadline:
+        time.sleep(0.3)
+    queue = client.get("/api/label/text", params={"dataset": dataset}).json()
+    assert queue["suggestError"] is None and queue["unsuggested"] == 0
+    guesses = {item["text"]: item["suggestion"]["category"] for item in queue["items"]}
+    assert guesses == {unsorted[0]: "Good", unsorted[1]: "Bad", unsorted[2]: "Good"}
+    chances = [item["suggestion"]["chance"] for item in queue["items"]]
+    assert chances == sorted(chances)  # least sure first
+    # Labelling one takes it off the list; the rest keep their suggestions.
+    first = queue["items"][0]
+    client.post(f"/api/label/text/{first['id']}/assign", params={"dataset": dataset}, json={"category": first["suggestion"]["category"]})
+    queue = client.get("/api/label/text", params={"dataset": dataset}).json()
+    assert queue["total"] == 2 and all(item["suggestion"] for item in queue["items"])
