@@ -94,6 +94,38 @@ print(json.dumps({'kind': 'pose', 'points': m.POINTS, 'features': m.FEATURES, 'l
 """
 
 
+# A fast detector, at the 320 by 320 size it reads. The surest boxes for a fixed pattern check the page.
+_EXPORT_DETECT = """
+import json, math, sys, warnings
+sys.path.insert(0, '.')
+warnings.filterwarnings('ignore')
+import torch
+import model as m
+settings = json.loads(open('model/settings.json', encoding='utf-8').read())
+detector = m.build(settings['categories'], pretrained=False)
+detector.load_state_dict(torch.load('model/model.pt', map_location='cpu', weights_only=True))
+detector.eval()
+class Flat(torch.nn.Module):
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+    def forward(self, image):
+        out = self.inner([image])[0]
+        return out['boxes'], out['scores'], out['labels']
+flat = Flat(detector).eval()
+pattern = torch.tensor([math.sin(i * 0.37) * 0.5 + 0.5 for i in range(3 * 320 * 320)], dtype=torch.float32).reshape(3, 320, 320)
+with torch.no_grad():
+    boxes, scores, _ = flat(pattern)
+torch.onnx.export(flat, (pattern,), 'app.onnx.partial', dynamo=False, opset_version=17, input_names=['image'],
+                  output_names=['boxes', 'scores', 'labels'], dynamic_axes={'boxes': {0: 'n'}, 'scores': {0: 'n'}, 'labels': {0: 'n'}})
+import os
+os.replace('app.onnx.partial', 'app.onnx')
+top = min(20, len(scores))
+print(json.dumps({'kind': 'detect', 'labels': settings['categories'], 'size': 320,
+                  'check': {'scores': scores[:top].tolist(), 'boxes': boxes[:top].reshape(-1).tolist()}}))
+"""
+
+
 def _export(job: training.Job) -> dict:
     """Exports the model once. A trained model never changes, so later pages reuse the file."""
     folder = training._folder(job)
@@ -103,7 +135,7 @@ def _export(job: training.Job) -> dict:
     try:
         with training._predictions:
             done = subprocess.run(
-                [sys.executable, "-I", "-c", _EXPORT_POSE if job.task == "pose" else _EXPORT], cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
+                [sys.executable, "-I", "-c", {"pose": _EXPORT_POSE, "detect": _EXPORT_DETECT}.get(job.task, _EXPORT)], cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace", timeout=training.PREDICT_LIMIT_SECONDS,
             )
     except subprocess.TimeoutExpired:
@@ -118,13 +150,19 @@ def _export(job: training.Job) -> dict:
 
 def _job(job_id: str) -> training.Job:
     job = training.stored(job_id)
-    if job.task not in ("image", "pose"):
-        raise TrainingError(422, "Apps can be made from photo models and pose models for now.")
+    if job.task not in ("image", "pose", "detect"):
+        raise TrainingError(422, "Apps can be made from photo models, pose models and fast find-things models for now.")
     if job.status == "running":
         raise TrainingError(409, "This model is still training.")
     if not job.hasModel:
         raise TrainingError(409, "This run didn't save a model.")
+    if job.task == "detect" and _detect_settings(job).get("detector", "accurate") != "fast":
+        raise TrainingError(422, "The accurate detector is too big and slow for a web page. Train again with the fast detector to make an app.")
     return job
+
+
+def _detect_settings(job: training.Job) -> dict:
+    return json.loads((training._folder(job) / "model" / "settings.json").read_text(encoding="utf-8"))
 
 
 def page(job_id: str) -> tuple[str, str]:
@@ -135,16 +173,24 @@ def page(job_id: str) -> tuple[str, str]:
     if len(model) > MAX_APP_MODEL_BYTES:
         raise TrainingError(413, f"This model is {len(model) // (1024 * 1024)} MB, too big to put in a web page. Smaller models, like the ones built from blocks, work best.")
     # No "<" at all, so nothing in a name can end the script block or change how it's read.
-    pose = job.task == "pose"
-    what = ("hand signs" if info.get("points") == "hands" else "poses") if pose else "photos"
-    settings = json.dumps({**info, "name": job.projectName, "trainedAt": job.startedAt, "what": what}).replace("<", "\\u003c")
+    pose, detect = job.task == "pose", job.task == "detect"
+    labels = ", ".join(info["labels"])
+    if detect:
+        about, nothing = f"Finds and counts: {labels}.", "Nothing found."
+    elif pose:
+        hands = info.get("points") == "hands"
+        about, nothing = f"Sorts {'hand signs' if hands else 'poses'} into: {labels}.", "No hands in view." if hands else "No one in view."
+    else:
+        about, nothing = f"Sorts photos into: {labels}.", ""
+    extra_settings = {"sure": _detect_settings(job).get("sure", 0.5)} if detect else {}  # the slider may have moved since export
+    settings = json.dumps({**info, **extra_settings, "name": job.projectName, "trainedAt": job.startedAt, "about": about, "nothing": nothing}).replace("<", "\\u003c")
     finder = training._folder(job) / "model" / "points.task"
     extra = ""
     if pose:
         extra = (f'<script id="finder" type="application/octet-stream">{base64.b64encode(finder.read_bytes()).decode()}</script>\n'
                  f'<script src="{VISION_URL}vision_bundle.js" integrity="{VISION_INTEGRITY}" crossorigin="anonymous"></script>')
     text = (_PAGE
-            .replace("__MODEL_CODE__", (_POSE_CODE if pose else _IMAGE_CODE).replace("__VISION__", VISION_URL))
+            .replace("__MODEL_CODE__", (_POSE_CODE if pose else _DETECT_CODE if detect else _IMAGE_CODE).replace("__VISION__", VISION_URL))
             .replace("__EXTRA__", extra)
             .replace("__TITLE__", html.escape(job.projectName))
             .replace("__RUNTIME__", RUNTIME_URL)
@@ -310,6 +356,83 @@ async function load() {
 
 """
 
+_DETECT_CODE = r"""// ---------------------------------------------------------------- the model
+
+// The detector reads a 320 by 320 picture and returns boxes in that picture's pixels, surest first.
+const SIDE = 320, COLOURS = ["#2f5fb8", "#d1495b", "#2e7d5b", "#c77d00", "#7b4fb8", "#0f8b8d", "#b34a7d", "#5b6472"];
+
+function prepare(source, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = SIDE; canvas.height = SIDE;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, 0, 0, width, height, 0, 0, SIDE, SIDE);
+  const pixels = context.getImageData(0, 0, SIDE, SIDE).data, plane = SIDE * SIDE, data = new Float32Array(3 * plane);
+  for (let i = 0; i < plane; i++) for (let c = 0; c < 3; c++) data[c * plane + i] = pixels[i * 4 + c] / 255;
+  return data;
+}
+
+async function run(data) {
+  const output = await session.run({ image: new ort.Tensor("float32", data, [3, SIDE, SIDE]) });
+  return { boxes: Array.from(output.boxes.data), scores: Array.from(output.scores.data), labels: Array.from(output.labels.data, Number) };
+}
+
+function draw(found, element, width, height, mirrored) {
+  const canvas = $("overlay"), ratio = window.devicePixelRatio || 1, area = shownArea(element, width, height);
+  canvas.width = Math.round(area.frame.width * ratio);
+  canvas.height = Math.round(area.frame.height * ratio);
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.font = "600 12px system-ui, sans-serif";
+  for (const box of found) {
+    const colour = COLOURS[S.labels.indexOf(box.name) % COLOURS.length];
+    const left = area.left + (mirrored ? 1 - box.x - box.w : box.x) * area.width, top = area.top + box.y * area.height;
+    context.strokeStyle = colour; context.lineWidth = 2.5;
+    context.strokeRect(left, top, box.w * area.width, box.h * area.height);
+    const tag = `${box.name} ${Math.round(box.chance * 100)}%`, tagWidth = context.measureText(tag).width + 10;
+    context.fillStyle = colour; context.fillRect(left, Math.max(0, top - 18), tagWidth, 18);
+    context.fillStyle = "#fff"; context.fillText(tag, left + 5, Math.max(0, top - 18) + 13);
+  }
+}
+
+async function answer(source, width, height, mirrored) {
+  const out = await run(prepare(source, width, height)), found = [];
+  for (let i = 0; i < out.scores.length; i++) {
+    if (out.scores[i] < S.sure) continue;
+    const [x1, y1, x2, y2] = out.boxes.slice(i * 4, i * 4 + 4).map((v) => Math.min(Math.max(v / SIDE, 0), 1));
+    found.push({ name: S.labels[out.labels[i] - 1], chance: out.scores[i], x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+  }
+  draw(found, source, width, height, mirrored);
+  window.lastBoxes = found;
+  if (!found.length) return null;
+  // One row per thing it found: how many, and how sure it is of the surest one.
+  return S.labels
+    .map((name) => { const mine = found.filter((box) => box.name === name); return { name, count: mine.length, chance: Math.max(0, ...mine.map((box) => box.chance)) }; })
+    .filter((row) => row.count)
+    .sort((a, b) => b.count - a.count || b.chance - a.chance);
+}
+
+async function load() {
+  if (typeof ort === "undefined") { say("The model runner couldn't load. Connect to the internet once to open this page.", "bad"); return; }
+  ort.env.wasm.wasmPaths = "__RUNTIME__";
+  ort.env.wasm.numThreads = 1;
+  const bytes = await (await fetch(`data:application/octet-stream;base64,${document.getElementById("model").textContent.trim()}`)).arrayBuffer();
+  session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+  // A fixed pattern, run by PyTorch when the page was made, must give the same surest boxes here.
+  const pattern = Float32Array.from({ length: 3 * SIDE * SIDE }, (_, i) => Math.sin(i * 0.37) * 0.5 + 0.5);
+  const got = await run(pattern);
+  let gap = got.scores.length >= S.check.scores.length ? 0 : 1;
+  S.check.scores.forEach((v, i) => { gap = Math.max(gap, Math.abs(v - got.scores[i])); });
+  S.check.boxes.forEach((v, i) => { gap = Math.max(gap, Math.abs(v - got.boxes[i]) / SIDE); });
+  window.selfCheckGap = gap;
+  if (gap < 1e-3) say("✓ Model loaded and checked. It runs on this device.", "good");
+  else say("This model gave different answers here than when it was made, so its guesses may be wrong.", "bad");
+  $("camera").disabled = false;
+  $("choose").disabled = false;
+}
+
+"""
+
 _PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -417,7 +540,7 @@ const FRAMES_TO_FIRE = 3;
 const COOLDOWN_MS = 2000;
 let session = null, stream = null, running = false;
 
-$("about").textContent = `Sorts ${S.what} into: ${S.labels.join(", ")}. Trained ${new Date(S.trainedAt * 1000).toLocaleDateString()}.`;
+$("about").textContent = `${S.about} Trained ${new Date(S.trainedAt * 1000).toLocaleDateString()}.`;
 
 function say(text, tone) {
   const box = $("status");
@@ -434,7 +557,7 @@ function show(answers) {
   if (!answers) {
     const row = document.createElement("li");
     row.className = "nothing muted";
-    row.textContent = S.points === "hands" ? "No hands in view." : "No one in view.";
+    row.textContent = S.nothing;
     $("answers").replaceChildren(row);
     check(null);
     return;
@@ -442,12 +565,12 @@ function show(answers) {
   $("answers").replaceChildren(...answers.map((a) => {
     const row = document.createElement("li");
     row.innerHTML = `<span class="name"></span><span class="track"><span></span></span><span class="value"></span>`;
-    row.children[0].textContent = a.name;
+    row.children[0].textContent = a.count === undefined ? a.name : `${a.name} × ${a.count}`;
     row.children[1].firstChild.style.width = `${a.chance * 100}%`;
     row.children[2].textContent = `${Math.round(a.chance * 100)}%`;
     return row;
   }));
-  check(answers[0]);
+  check(answers);
 }
 
 // Where a picture shown with object-fit: contain really sits inside its frame.
@@ -553,9 +676,11 @@ function fire(rule, answer) {
   drawRules();
 }
 
-function check(top) {
+function check(answers) {
   for (const rule of rules) {
-    const sure = !!top && top.name === rule.category && top.chance * 100 >= rule.threshold;
+    // A rule looks at every answer, so a detector's rule fires for any box of its thing.
+    const top = (answers || []).find((a) => a.name === rule.category);
+    const sure = !!top && top.chance * 100 >= rule.threshold;
     rule.streak = sure ? (rule.streak || 0) + 1 : Math.min(0, (rule.streak || 0) - 1);
     // It fires once when it becomes sure, then waits until it has been unsure for a moment.
     if (rule.streak >= FRAMES_TO_FIRE && !rule.on && !(rule.last && performance.now() - rule.last < COOLDOWN_MS)) { rule.on = true; fire(rule, top); }

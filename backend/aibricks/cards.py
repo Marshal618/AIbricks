@@ -37,6 +37,18 @@ THINGS = {"pose": "photos", "detect": "photos", "anomaly": "photos", "image": "p
 THING = {"pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
+def _method(job) -> str:
+    if job.task == "detect":
+        try:
+            settings = json.loads((training._folder(job) / "model" / "settings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            settings = {}
+        if settings.get("detector") == "fast":
+            return ("An SSDlite detector (Sandler et al., 2018) with a MobileNetV3 backbone, pretrained on COCO by torchvision, "
+                    "with its last layer replaced and the whole detector fine-tuned on boxed photos. Made to be small and quick.")
+    return METHODS.get(job.task, "Trained in AI Bricks.")
+
+
 class CardNotes(BaseModel):
     intendedUse: str = Field(default="", max_length=2000)
     notFor: str = Field(default="", max_length=2000)
@@ -106,7 +118,7 @@ def card(job_id: str) -> dict:
     details = [
         f"Name: {job.projectName}",
         f"Job: {_job_text(job, metrics, things)}",
-        f"Method: {METHODS.get(job.task, 'Trained in AI Bricks.')}",
+        f"Method: {_method(job)}",
         f"Trained: {trained}, in {took}{' on ' + job.device if job.device else ''}",
         f"Model ID: {job.id}",
     ]

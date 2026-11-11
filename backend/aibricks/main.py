@@ -729,10 +729,11 @@ def clear_boxes(dataset_id: str, image_id: str) -> dict:
 
 
 @app.post("/api/datasets/{dataset_id}/train-find", dependencies=[Depends(_needs_json)])
-def train_find(dataset_id: str) -> dict:
-    """Fine-tunes a pretrained detector on a “find things” dataset's boxed photos."""
+def train_find(dataset_id: str, detector: Literal["accurate", "fast"] = "accurate") -> dict:
+    """Fine-tunes a pretrained detector on a “find things” dataset's boxed photos: the accurate one, or the
+    fast one that suits phones, web pages and small computers."""
     try:
-        return {"job": training.public(finder.start(dataset_id))}
+        return {"job": training.public(finder.start(dataset_id, detector))}
     except training.TrainingError as error:
         raise _raise(error) from None
 

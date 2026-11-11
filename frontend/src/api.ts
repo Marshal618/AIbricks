@@ -490,11 +490,11 @@ export async function saveBoxes(dataset: string, image: string, boxes: Box[]): P
 
 export const clearBoxes = (dataset: string, image: string) => send(`/api/datasets/${dataset}/boxes/${image}`, "DELETE");
 
-export async function trainFindModel(id: string): Promise<void> {
-  await sendJson(`/api/datasets/${id}/train-find`);
+export async function trainFindModel(id: string, detector: "accurate" | "fast" = "accurate"): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-find?${new URLSearchParams({ detector })}`);
 }
 
-export const fetchFindSettings = (job: string): Promise<{ sure: number; categories: string[] }> => getJson(`/api/models/${job}/find`);
+export const fetchFindSettings = (job: string): Promise<{ sure: number; categories: string[]; detector: "accurate" | "fast" }> => getJson(`/api/models/${job}/find`);
 
 export const setFindSure = (job: string, sure: number): Promise<{ sure: number }> => putJson(`/api/models/${job}/find`, { sure });
 

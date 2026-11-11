@@ -168,9 +168,17 @@ Enter; keys 1 to 9 pick the thing. Mark a photo with nothing in it as **Nothing 
 teaches it what not to find. Once a model exists, **Let the model draw first** fills in its guesses
 as dashed boxes for you to fix.
 
-It fine-tunes a Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained on
-the COCO photos by torchvision. The first run downloads it, about 75 MB. Training needs 10 done
-photos and 5 boxes of each thing; aim for 30 boxes of each. The results show how many things it
+Before training, choose a detector. Both have a MobileNetV3 backbone pretrained on the COCO photos by
+torchvision, and both are fine-tuned on your boxes:
+
+- **Accurate** is Faster R-CNN (Ren et al., 2015). It's best at small and crowded things, and is
+  meant for this computer. The first run downloads it, about 75 MB.
+- **Fast** is SSDlite (Sandler et al., 2018), the kind of one-pass detector used on phones and small
+  computers. It's about a fifth of the size (3.4 million parameters against 19 million, 14 MB to
+  download) and can become a web app, but it misses more small things. In our tests it was about 1.5
+  times quicker per photo.
+
+Training needs 10 done photos and 5 boxes of each thing; aim for 30 boxes of each. The results show how many things it
 found and missed on held-back photos, its false alarms and the standard mAP@50 score, with the photos
 it got wrong shown with your boxes and its own. **Try it** draws live boxes and counts on the webcam,
 and a slider sets how sure it must be before it draws a box. Versions keep the boxes.
@@ -300,9 +308,9 @@ file and opened on another computer. Files contain the design only, not data or 
 
 ### As a web app
 
-**Open as an app** and **Download app** appear under the newest photo or pose model. They make a
-single web page that runs the model by itself in any browser, with the camera or a chosen photo.
-Nothing is uploaded.
+**Open as an app** and **Download app** appear under the newest photo model, pose model or fast
+find-things model. They make a single web page that runs the model by itself in any browser, with
+the camera or a chosen photo. Nothing is uploaded.
 
 The page can follow simple rules: when it's at least a chosen percentage sure of a category for half
 a second, it can play a beep, show a message, count, or send the result to a web address you type,
@@ -316,7 +324,9 @@ the ones PyTorch gave when the page was made, and warns you if they differ.
 
 Phones only allow the camera on `https://` pages, so to use an app on a phone, put the file on any
 website, such as GitHub Pages. Models over 120 MB, like the vision transformer, are too big for a
-page. Text, sound, unusual-photo and find-things models can't become apps yet.
+page. A find-things page draws boxes and counts each thing, and its rules fire when any box of a thing
+is sure enough. Accurate find-things models are too big for a page, so train with **Fast** to make one.
+Text, sound and unusual-photo models can't become apps yet.
 
 ### As a Python project
 

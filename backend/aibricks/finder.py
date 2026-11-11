@@ -139,18 +139,32 @@ def remove_category(dataset: str, name: str) -> None:
 
 _MODEL_PY = '''"""Finds things in photos and draws a box around each one.
 
-A Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained by torchvision on
-the COCO photos. Its last layer is replaced to find your own things, then the whole detector is
-fine-tuned on your boxed photos.
+DETECTOR picks one of two detectors, both with a MobileNetV3 backbone pretrained by torchvision on
+the COCO photos. "accurate" is Faster R-CNN (Ren et al., 2015), which proposes places that might hold
+something and then checks each one. "fast" is SSDlite (Sandler et al., 2018), which finds everything
+in one pass: it's about five times smaller and quicker, so it suits phones, web pages and small
+computers, but it misses more small things. Either way the last layer is replaced to find your own
+things, then the whole detector is fine-tuned on your boxed photos.
 """
 import json
+from functools import partial
 from pathlib import Path
 
 import torch
 from PIL import Image, ImageOps
-from torchvision.models.detection import FasterRCNN_MobileNet_V3_Large_320_FPN_Weights, fasterrcnn_mobilenet_v3_large_320_fpn
+from torch import nn
+from torchvision.models.detection import (FasterRCNN_MobileNet_V3_Large_320_FPN_Weights, SSDLite320_MobileNet_V3_Large_Weights,
+                                          fasterrcnn_mobilenet_v3_large_320_fpn, ssdlite320_mobilenet_v3_large)
+from torchvision.models.detection import _utils as detection_utils
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.models.detection.ssdlite import SSDLiteClassificationHead
 from torchvision.transforms.functional import to_tensor
+
+DETECTOR = "__DETECTOR__"
+# How each detector is taught. SSDlite's new last layer has no first step to narrow down where things
+# might be, so it needs more passes over the photos.
+TRAINING = {"accurate": {"lr": 0.01, "epochs": (24, 16), "download": "75 MB"},
+            "fast": {"lr": 0.01, "epochs": (40, 25), "download": "14 MB"}}[DETECTOR]
 
 
 def best_device():
@@ -160,12 +174,32 @@ def best_device():
 
 def build(categories, pretrained=True):
     """The detector, with one output for each thing plus one for background."""
+    classes = len(categories) + 1
+    if DETECTOR == "fast":
+        if not pretrained:
+            return ssdlite320_mobilenet_v3_large(weights=None, weights_backbone=None, num_classes=classes)
+        model = ssdlite320_mobilenet_v3_large(weights=SSDLite320_MobileNet_V3_Large_Weights.DEFAULT)
+        channels = detection_utils.retrieve_out_channels(model.backbone, (320, 320))
+        anchors = model.anchor_generator.num_anchors_per_location()
+        model.head.classification_head = SSDLiteClassificationHead(channels, anchors, classes, partial(nn.BatchNorm2d, eps=0.001, momentum=0.03))
+        return model
     if pretrained:
         model = fasterrcnn_mobilenet_v3_large_320_fpn(weights=FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT)
         features = model.roi_heads.box_predictor.cls_score.in_features
-        model.roi_heads.box_predictor = FastRCNNPredictor(features, len(categories) + 1)
+        model.roi_heads.box_predictor = FastRCNNPredictor(features, classes)
         return model
-    return fasterrcnn_mobilenet_v3_large_320_fpn(weights=None, weights_backbone=None, num_classes=len(categories) + 1)
+    return fasterrcnn_mobilenet_v3_large_320_fpn(weights=None, weights_backbone=None, num_classes=classes)
+
+
+def learning(model):
+    """Training mode. SSDlite's pretrained layers keep the averages they learned on COCO, as a few
+    photos at a time would make them jump around. Only its new last layer learns its own."""
+    model.train()
+    if DETECTOR == "fast":
+        for name, layer in model.named_modules():
+            if isinstance(layer, nn.BatchNorm2d) and not name.startswith("head.classification_head"):
+                layer.eval()
+    return model
 
 
 def load_image(source):
@@ -226,7 +260,7 @@ from pathlib import Path
 
 import torch
 
-from model import best_device, boxes_from, build, load_image
+from model import DETECTOR, TRAINING, best_device, boxes_from, build, learning, load_image
 
 DATA = Path("data")
 HOLD_BACK = 0.2
@@ -328,8 +362,12 @@ def check(model, examples, categories, device):
 
 
 def check_loss(model, examples, device):
-    """The detector's own loss on the held-back photos. Its batch norm is frozen, so this changes nothing."""
+    """The detector's own loss on the held-back photos. Every running average is held still, so this
+    changes nothing in the model."""
     model.train()
+    for layer in model.modules():
+        if isinstance(layer, torch.nn.BatchNorm2d):
+            layer.eval()
     total = 0.0
     with torch.no_grad():
         for _, image, goal in examples:
@@ -350,15 +388,19 @@ def main():
     try:
         model = build(categories).to(device)
     except Exception as problem:
-        sys.exit(f"The pretrained detector couldn't be loaded. The first run downloads it, about 75 MB. ({type(problem).__name__})")
+        sys.exit(f"The pretrained detector couldn't be loaded. The first run downloads it, about {TRAINING['download']}. ({type(problem).__name__})")
     train, held_back = load(train_names, boxes, categories), load(check_names, boxes, categories)
-    epochs = int(os.environ.get("EPOCHS", "0")) or (24 if len(train) < 60 else 16)
+    epochs = int(os.environ.get("EPOCHS", "0")) or TRAINING["epochs"][0 if len(train) < 60 else 1]
     batch = 4
-    steps_per_epoch = math.ceil(len(train) / batch)
+    # A last batch of one photo joins the one before, as SSDlite's new layers can't learn averages from one.
+    starts = list(range(0, len(train), batch))
+    if len(starts) > 1 and len(train) - starts[-1] == 1:
+        starts.pop()
+    steps_per_epoch = len(starts)
     total_steps = epochs * steps_per_epoch
     print(f"Training on {len(train)} samples, checking on {len(held_back)}, using {device}.", flush=True)
     parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
-    optimiser = torch.optim.SGD(parameters, lr=0.01, momentum=0.9, weight_decay=1e-4)
+    optimiser = torch.optim.SGD(parameters, lr=float(os.environ.get("LEARNING_RATE", "0")) or TRAINING["lr"], momentum=0.9, weight_decay=1e-4)
     warmup = min(steps_per_epoch, 20)
     schedule = torch.optim.lr_scheduler.LambdaLR(optimiser, lambda step: min(1.0, (step + 1) / warmup) * 0.5 * (1 + math.cos(math.pi * step / total_steps)))
     random.seed(0)
@@ -366,13 +408,14 @@ def main():
     best, step = None, 0
     partial = Path("model.partial")
     for epoch in range(1, epochs + 1):
-        model.train()
+        learning(model)
         order = list(train)
         random.shuffle(order)
         running = 0.0
-        for start in range(0, len(order), batch):
+        for index, start in enumerate(starts):
+            end = starts[index + 1] if index + 1 < len(starts) else len(order)
             images, goals = [], []
-            for _, image, goal in order[start:start + batch]:
+            for _, image, goal in order[start:end]:
                 if random.random() < 0.5:
                     image, goal = flipped(image, goal)
                 images.append(image.to(device))
@@ -400,7 +443,7 @@ def main():
             shutil.rmtree(partial, ignore_errors=True)
             partial.mkdir()
             torch.save(model.state_dict(), partial / "model.pt")
-            (partial / "settings.json").write_text(json.dumps({"categories": categories, "sure": SURE}), encoding="utf-8")
+            (partial / "settings.json").write_text(json.dumps({"categories": categories, "sure": SURE, "detector": DETECTOR}), encoding="utf-8")
     shutil.rmtree("model", ignore_errors=True)
     os.replace(partial, "model")
 
@@ -459,9 +502,8 @@ if __name__ == "__main__":
 
 _README = """# {name}
 
-Finds things in photos and draws a box around each one, trained in AI Bricks. It's a Faster R-CNN
-detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained by torchvision on the COCO photos
-and fine-tuned on your boxed photos. Your photos aren't included in this download.
+Finds things in photos and draws a box around each one, trained in AI Bricks. {about} Your photos
+aren't included in this download.
 
 ## Use it
 
@@ -475,8 +517,13 @@ It shows boxes it's at least 50% sure of. Change `sure` in `model/settings.json`
 ## Train it again
 
 Put photos in `data/images/` and their boxes in `data/boxes.json`, as described at the top of
-`train.py`, then run `python train.py`. The first run downloads the pretrained detector, about 75 MB.
+`train.py`, then run `python train.py`. The first run downloads the pretrained detector, about {download}.
 """
+
+_ABOUT_ACCURATE = ("It's a Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained by "
+                   "torchvision on the COCO photos and fine-tuned on your boxed photos.")
+_ABOUT_FAST = ("It's an SSDlite detector (Sandler et al., 2018) with a MobileNetV3 backbone, pretrained by torchvision "
+               "on the COCO photos and fine-tuned on your boxed photos. It's small and quick, made for phones and small computers.")
 
 LIVE_RUNNER = """
 import base64, contextlib, io, json, sys
@@ -494,10 +541,15 @@ for line in sys.stdin:
 """
 
 
-def project_files(name: str) -> dict[str, str]:
+DETECTORS = ("accurate", "fast")
+
+
+def project_files(name: str, detector: str = "accurate") -> dict[str, str]:
+    about = (_ABOUT_FAST if detector == "fast" else _ABOUT_ACCURATE)
     return {
-        "model.py": _MODEL_PY, "train.py": _TRAIN_PY, "predict.py": _PREDICT_PY,
-        "README.md": _README.format(name=name), "requirements.txt": "torch>=2.2\ntorchvision>=0.17\npillow\n",
+        "model.py": _MODEL_PY.replace("__DETECTOR__", detector), "train.py": _TRAIN_PY, "predict.py": _PREDICT_PY,
+        "README.md": _README.format(name=name, about=about, download="14 MB" if detector == "fast" else "75 MB"),
+        "requirements.txt": "torch>=2.2\ntorchvision>=0.17\npillow\n",
     }
 
 
@@ -526,7 +578,9 @@ def freeze(dataset: str, run: Path) -> None:
     (run / "data" / "boxes.json").write_text(json.dumps({"categories": meta["categories"], "photos": boxes}), encoding="utf-8")
 
 
-def start(dataset: str) -> training.Job:
+def start(dataset: str, detector: str = "accurate") -> training.Job:
+    if detector not in DETECTORS:
+        raise TrainingError(422, "Choose the accurate or the fast detector.")
     with training._lock:
         meta = datasets._read(dataset)
         if not is_find(meta):
@@ -538,7 +592,7 @@ def start(dataset: str) -> training.Job:
         if problems:
             raise TrainingError(422, " ".join(problems))
         amounts, _, _ = counts(meta)
-    files = project_files(meta["name"])
+    files = project_files(meta["name"], detector)
     return training.start_run(meta["name"], codegen.slug(meta["name"]), codegen.build_hash(files), files,
                               amounts, dataset, versions.freeze, "detect", 0.0)
 
@@ -563,4 +617,5 @@ def details(job_id: str) -> dict:
     if job.task != "detect" or not job.hasModel:
         raise TrainingError(404, "That model doesn't find things in photos.")
     settings = json.loads((training._folder(job) / "model" / "settings.json").read_text(encoding="utf-8"))
-    return {"sure": settings.get("sure", 0.5), "categories": settings["categories"], "metrics": job.metrics}
+    return {"sure": settings.get("sure", 0.5), "categories": settings["categories"], "metrics": job.metrics,
+            "detector": settings.get("detector", "accurate")}

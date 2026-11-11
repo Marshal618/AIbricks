@@ -1,7 +1,7 @@
 import * as api from "./api";
 import { Why } from "./Ui";
 
-/** Links to the page that runs a photo or pose model by itself, with a line on what it is. */
+/** Links to the page that runs a photo, pose or fast find-things model by itself, with a line on what it is. */
 export function ModelApp({ jobId, beginner, example = "beep when it sees a cup", pose = false }: { jobId: string; beginner: boolean; example?: string; pose?: boolean }) {
   return (
     <div className="model-app field-note">

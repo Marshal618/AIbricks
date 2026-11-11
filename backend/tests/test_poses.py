@@ -197,7 +197,7 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     text = page.text
     assert f'integrity="{webapp.VISION_INTEGRITY}"' in text and "<title>Hand signs</title>" in text
     settings = json.loads(re.search(r'<script id="settings" type="application/json">(.*?)</script>', text, re.S).group(1))
-    assert settings["kind"] == "pose" and settings["points"] == "hands" and settings["labels"] == sorted(SIGNS) and settings["what"] == "hand signs"
+    assert settings["kind"] == "pose" and settings["points"] == "hands" and settings["labels"] == sorted(SIGNS) and settings["about"].startswith("Sorts hand signs")
     finder = base64.b64decode(re.search(r'<script id="finder" type="application/octet-stream">(.*?)</script>', text, re.S).group(1))
     assert hashlib.sha256(finder).hexdigest() == "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1"
     network = onnxruntime.InferenceSession(base64.b64decode(re.search(r'<script id="model" type="application/octet-stream">(.*?)</script>', text, re.S).group(1)))
