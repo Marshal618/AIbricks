@@ -25,6 +25,7 @@ models, fetched once the first time a feature needs them.
 
 Every model gets an honest score on examples it never learned from, shows the mistakes it made,
 and can be tried straight away on new examples, including live from your webcam or microphone.
+Photo, pose and fast find-things models also become web apps and Raspberry Pi kits.
 
 ## Get started
 
@@ -88,8 +89,10 @@ There are three screens:
   own data doesn't. Only public, ungated datasets with a readable category column work. Model
   downloads include `DATA_SOURCES.md`, which credits what was imported. Check each licence yourself.
 - **Labelling by keyboard.** Unsorted photos and text can be sorted quickly: number keys choose a
-  category, S skips, X removes and Z undoes. Once a model is trained, **Suggest labels** has it
-  guess the rest, starting with the photos it's least sure about, so you only confirm or correct.
+  category, S skips, X removes and Z undoes. Once a model is trained, **Suggest labels** has the
+  dataset's newest model guess the rest, starting with the ones it's least sure about, so you only
+  confirm or correct with Enter. It works for photo, pose and text datasets. Sound clips are filed as
+  they're recorded, so there's nothing left to suggest for.
 
 ### Data levels and the label check
 
@@ -166,9 +169,17 @@ Enter; keys 1 to 9 pick the thing. Mark a photo with nothing in it as **Nothing 
 teaches it what not to find. Once a model exists, **Let the model draw first** fills in its guesses
 as dashed boxes for you to fix.
 
-It fine-tunes a Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained on
-the COCO photos by torchvision. The first run downloads it, about 75 MB. Training needs 10 done
-photos and 5 boxes of each thing; aim for 30 boxes of each. The results show how many things it
+Before training, choose a detector. Both have a MobileNetV3 backbone pretrained on the COCO photos by
+torchvision, and both are fine-tuned on your boxes:
+
+- **Accurate** is Faster R-CNN (Ren et al., 2015). It's best at small and crowded things, and is
+  meant for this computer. The first run downloads it, about 75 MB.
+- **Fast** is SSDlite (Sandler et al., 2018), the kind of one-pass detector used on phones and small
+  computers. It's about a fifth of the size (3.4 million parameters against 19 million, 14 MB to
+  download) and can become a web app, but it misses more small things. In our tests it was about 1.5
+  times quicker per photo.
+
+Training needs 10 done photos and 5 boxes of each thing; aim for 30 boxes of each. The results show how many things it
 found and missed on held-back photos, its false alarms and the standard mAP@50 score, with the photos
 it got wrong shown with your boxes and its own. **Try it** draws live boxes and counts on the webcam,
 and a slider sets how sure it must be before it draws a box. Versions keep the boxes.
@@ -298,9 +309,9 @@ file and opened on another computer. Files contain the design only, not data or 
 
 ### As a web app
 
-**Open as an app** and **Download app** appear under the newest photo or pose model. They make a
-single web page that runs the model by itself in any browser, with the camera or a chosen photo.
-Nothing is uploaded.
+**Open as an app** and **Download app** appear under the newest photo model, pose model or fast
+find-things model. They make a single web page that runs the model by itself in any browser, with
+the camera or a chosen photo. Nothing is uploaded.
 
 The page can follow simple rules: when it's at least a chosen percentage sure of a category for half
 a second, it can play a beep, show a message, count, or send the result to a web address you type,
@@ -314,7 +325,33 @@ the ones PyTorch gave when the page was made, and warns you if they differ.
 
 Phones only allow the camera on `https://` pages, so to use an app on a phone, put the file on any
 website, such as GitHub Pages. Models over 120 MB, like the vision transformer, are too big for a
-page. Text, sound, unusual-photo and find-things models can't become apps yet.
+page. A find-things page draws boxes and counts each thing, and its rules fire when any box of a thing
+is sure enough. Accurate find-things models are too big for a page, so train with **Fast** to make one.
+Text, sound and unusual-photo models can't become apps yet.
+
+### On a Raspberry Pi
+
+**Raspberry Pi kit**, next to **Download app**, gives a zip that runs the same model on a Raspberry
+Pi's camera, with no internet and no AI Bricks. It works for photo models, pose models and fast
+find-things models. Copy the folder to a Pi running 64-bit Raspberry Pi OS, then:
+
+```bash
+sh setup.sh                                  # installs what it needs and checks the model
+.venv/bin/python run.py                      # prints what the camera sees
+.venv/bin/python run.py --when Cup --pin 17  # switches GPIO 17 on while it sees Cup
+.venv/bin/python run.py --when Cup --command "aplay beep.wav"
+```
+
+A pin can drive an LED directly, or a relay or transistor board for anything bigger. It switches on
+after two photos in a row agree and off after three that don't, so one odd guess doesn't make it
+flicker. `--photo` checks photos instead of the camera, `--json` prints answers for another program,
+and `--usb` uses a USB webcam, which also works on any other computer.
+
+The kit holds the same ONNX model as the web app, run by ONNX Runtime, so the Pi doesn't need
+PyTorch. Pose kits also carry MediaPipe's point-finding model and install MediaPipe. `setup.sh` runs
+the same self-check as the web app, and its README shows how to start the model when the Pi turns on.
+The kit is tested on a Mac with photos and a simulated camera. The camera and pin code use the standard
+Picamera2, OpenCV and gpiozero libraries but haven't been tried on a real Pi or webcam yet.
 
 ### As a Python project
 

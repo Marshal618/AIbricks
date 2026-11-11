@@ -832,3 +832,5 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
 @media (max-width: 640px) {
   .pose-photo { grid-template-columns: minmax(0, 1fr); }
 }
+.find-detector label { display: flex; align-items: baseline; gap: 8px; }
+.find-detector legend { margin-bottom: 4px; }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import * as api from "./api";
 import { FindData } from "./FindData";
 import { WebcamCapture } from "./Webcam";
-import type { DatasetSummary, ImageQueue, LabelItem, TextQueue } from "./types";
+import type { DatasetSummary, ImageQueue, LabelAssist, LabelItem, TextQueue } from "./types";
 
 interface Props {
   dataset: DatasetSummary;
@@ -26,6 +26,63 @@ interface Adapter {
   assign: (id: string, category: string) => Promise<void>;
   unassign: (id: string, category: string | null) => Promise<void>;
   remove: (id: string) => Promise<void>;
+}
+
+/** Asks the dataset's newest model to guess a label for everything unsorted, and refreshes when it's done. */
+function useSuggestions(datasetId: string, suggesting: boolean, check: () => Promise<LabelAssist | null>, load: () => Promise<void>) {
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    if (!suggesting) return;
+    const timer = window.setInterval(async () => {
+      const next = await check().catch(() => null);
+      if (next && !next.suggesting) void load();
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [suggesting, check, load]);
+  const suggest = async () => {
+    setProblem(null);
+    try {
+      await api.startSuggestions(datasetId);
+      await load();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "Suggestions could not start.");
+    }
+  };
+  return { suggest, problem };
+}
+
+/** The card that offers suggestions, or says what's needed before the model can help. */
+function ModelHelp({ assist, items, categories, counts, things, trainHint, onSuggest, onBuild }: {
+  assist: LabelAssist; items: LabelItem[]; categories: string[]; counts: Record<string, number>; things: string;
+  trainHint: string; onSuggest: () => void; onBuild?: () => void;
+}) {
+  const sameCategories = assist.modelCategories !== null && JSON.stringify(assist.modelCategories) === JSON.stringify([...categories].sort());
+  const suggested = items.some((item) => item.suggestion);
+  const smallest = Math.min(...categories.map((name) => counts[name] ?? 0));
+  const differs = assist.modelCategories !== null && !sameCategories;
+  return (
+    <section className="card label-assist">
+      <div className="card-head">
+        <h2>Let the model help</h2>
+        {sameCategories && (
+          <button className="button button-small" disabled={assist.suggesting || assist.unsuggested === 0} onClick={onSuggest}>
+            {assist.suggesting ? "Working…" : assist.unsuggested === 0 ? "Suggestions ready" : "Suggest labels"}
+          </button>
+        )}
+      </div>
+      <p className="muted small">
+        {suggested
+          ? `The ${things} the model is least sure about come first, because they teach it the most. Check each suggestion, since the model can be wrong.`
+          : sameCategories
+            ? `Your trained model can suggest a label for each of the ${things}, so you only need to confirm or correct it.`
+            : differs
+              ? `The newest model was trained with different categories. ${trainHint} again, and it can suggest labels.`
+              : `Label about 20 ${things} per category, then ${trainHint.toLowerCase()}. It can then suggest the rest, and you only confirm or correct them.${smallest >= 20 ? "" : " It isn't ready yet."}`}
+      </p>
+      {assist.suggestError && <p className="small tone-bad field-note">{assist.suggestError}</p>}
+      {!sameCategories && smallest >= 20 && categories.length > 0 && onBuild && <button className="button button-small field-note" onClick={onBuild}>Build a model with this data</button>}
+    </section>
+  );
 }
 
 /** Everything for filling one dataset: open data, your own files, and labelling. */
@@ -215,15 +272,9 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const suggesting = queue?.suggesting ?? false;
-  useEffect(() => {
-    if (!suggesting) return;
-    const timer = window.setInterval(async () => {
-      const next = await api.fetchImageQueue(datasetId).catch(() => null);
-      if (next && !next.suggesting) void load();
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [suggesting, load, datasetId]);
+  const checkImages = useCallback(() => api.fetchImageQueue(datasetId), [datasetId]);
+  const help = useSuggestions(datasetId, queue?.suggesting ?? false, checkImages, load);
+  const pose = dataset.goal === "pose";
 
   const addFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []).filter((file) => !file.name.startsWith("."));
@@ -249,16 +300,6 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
     onChanged();
   };
 
-  const suggest = async () => {
-    setProblem(null);
-    try {
-      await api.startSuggestions(datasetId);
-      await load();
-    } catch (error) {
-      setProblem(error instanceof Error ? error.message : "Suggestions could not start.");
-    }
-  };
-
   const clearAll = async () => {
     if (!window.confirm("Remove all unsorted images from AI Bricks? Your original files aren't touched.")) return;
     await api.clearUnsortedImages(datasetId).catch(() => undefined);
@@ -271,9 +312,6 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
   }, []);
 
   const uploading = upload !== null && upload.done < upload.total;
-  const sameCategories = queue?.modelCategories !== null && queue?.modelCategories !== undefined
-    && JSON.stringify(queue.modelCategories) === JSON.stringify([...categories].sort());
-  const suggested = items.some((item) => item.suggestion);
   const smallest = Math.min(...categories.map((name) => counts[name] ?? 0));
 
   return (
@@ -313,25 +351,14 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
         )}
       </section>
 
-      {(queue?.total ?? 0) > 0 && <section className="card label-assist">
-        <div className="card-head">
-          <h2>Let the model help</h2>
-          {sameCategories && (queue?.total ?? 0) > 0 && (
-            <button className="button button-small" disabled={suggesting || queue?.unsuggested === 0} onClick={() => void suggest()}>
-              {suggesting ? "Working…" : queue?.unsuggested === 0 ? "Suggestions ready" : "Suggest labels"}
-            </button>
-          )}
-        </div>
-        <p className="muted small">
-          {suggested
-            ? "The images the model is least sure about come first, because they teach it the most. Check each suggestion, since the model can be wrong."
-            : sameCategories
-              ? "Your trained model can suggest a label for each image, so you only need to confirm or correct it."
-              : `Label about 20 images per category, then train a model on this dataset. It can then suggest the rest, and you only confirm or correct them.${smallest >= 20 ? "" : " It isn't ready yet."}`}
-        </p>
-        {queue?.suggestError && <p className="small tone-bad field-note">{queue.suggestError}</p>}
-        {!sameCategories && smallest >= 20 && categories.length > 0 && <button className="button button-small field-note" onClick={onBuild}>Build a model with this data</button>}
-      </section>}
+      {queue && queue.total > 0 && (
+        <ModelHelp
+          assist={queue} items={items} categories={categories} counts={counts} things={pose ? "photos" : "images"}
+          trainHint={pose ? "Train a pose model on the Train tab" : "Train a model on this dataset"}
+          onSuggest={() => void help.suggest()} onBuild={pose ? undefined : onBuild}
+        />
+      )}
+      {help.problem && <div className="result result-fail" role="alert"><p>{help.problem}</p></div>}
 
       <h2 className="section-title">Sort them</h2>
       {queue && categories.length === 0 && (
@@ -354,7 +381,7 @@ function ImageLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
           doneMessage={
             <div className="label-done">
               <p className="muted">{smallest === 0 && queue.total === 0 && !upload ? "Add images above to start labelling." : "All sorted. Your labelled images are ready to train on."}</p>
-              {smallest > 0 && <button className="button button-small" onClick={onBuild}>Build a model with this data</button>}
+              {smallest > 0 && !pose && <button className="button button-small" onClick={onBuild}>Build a model with this data</button>}
             </div>
           }
         />
@@ -392,6 +419,9 @@ function TextLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
   }, [categoryKey, datasetId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const checkText = useCallback(() => api.fetchTextQueue(JSON.parse(categoryKey), datasetId), [categoryKey, datasetId]);
+  const help = useSuggestions(datasetId, queue?.suggesting ?? false, checkText, load);
 
   const addFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -443,6 +473,14 @@ function TextLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
         {message && <p className="muted small field-note" role="status">{message}</p>}
       </section>
 
+      {queue && queue.total > 0 && (
+        <ModelHelp
+          assist={queue} items={items} categories={categories} counts={counts} things="texts"
+          trainHint="Train a text model on the Train tab" onSuggest={() => void help.suggest()}
+        />
+      )}
+      {help.problem && <div className="result result-fail" role="alert"><p>{help.problem}</p></div>}
+
       <h2 className="section-title">Sort them</h2>
       {queue && categories.length === 0 && (
         <div className="notice">Add at least one category above, then you can start labelling.</div>
@@ -472,7 +510,7 @@ function TextLabels({ dataset, onChanged, onUseCategories, onBuild }: Props) {
             : <button className="button button-small" disabled>Download texts.csv</button>}
         </div>
         <p className="muted small">
-          Text models train from the downloaded project. Put this file at <code>data/texts.csv</code> inside that project, then run <code>python train.py</code>.
+          Train a text model on the Train tab, or download your labels for a project built in the Model builder: put this file at <code>data/texts.csv</code> inside it, then run <code>python train.py</code>.
           Labels save as you go, so you can stop and come back.
         </p>
         {(queue?.otherLabels ?? 0) > 0 && <p className="muted small field-note">{queue?.otherLabels.toLocaleString()} labelled texts use a category this dataset doesn't have now, so they're left out of the file.</p>}

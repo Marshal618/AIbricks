@@ -455,6 +455,7 @@ export async function listen(job: string, recording: Blob, explain: boolean): Pr
 export const fetchSoundMistakes = (job: string): Promise<{ mistakes: SoundMistake[]; total: number }> => getJson(`/api/models/${job}/sound-mistakes`);
 
 export const modelAppUrl = (id: string, download = false) => `/api/train/${id}/app${download ? "?download=true" : ""}`;
+export const piKitUrl = (id: string) => `/api/train/${id}/pi`;
 
 export const fetchExperiment = (dataset: string): Promise<{ experiment: Experiment | null; budgets: number[]; changes: Record<string, { label: string; description: string }> }> =>
   getJson(`/api/datasets/${dataset}/experiments`);
@@ -490,11 +491,11 @@ export async function saveBoxes(dataset: string, image: string, boxes: Box[]): P
 
 export const clearBoxes = (dataset: string, image: string) => send(`/api/datasets/${dataset}/boxes/${image}`, "DELETE");
 
-export async function trainFindModel(id: string): Promise<void> {
-  await sendJson(`/api/datasets/${id}/train-find`);
+export async function trainFindModel(id: string, detector: "accurate" | "fast" = "accurate"): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-find?${new URLSearchParams({ detector })}`);
 }
 
-export const fetchFindSettings = (job: string): Promise<{ sure: number; categories: string[] }> => getJson(`/api/models/${job}/find`);
+export const fetchFindSettings = (job: string): Promise<{ sure: number; categories: string[]; detector: "accurate" | "fast" }> => getJson(`/api/models/${job}/find`);
 
 export const setFindSure = (job: string, sure: number): Promise<{ sure: number }> => putJson(`/api/models/${job}/find`, { sure });
 

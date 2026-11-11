@@ -3,6 +3,7 @@ import * as api from "./api";
 import type { Box, BoxedPhoto, CheckedPhoto, DatasetSummary, FoundBoxes, SavedModel } from "./types";
 import { Why } from "./Ui";
 import { CameraView, grab, useCamera } from "./Webcam";
+import { ModelApp } from "./ModelApp";
 
 export const FIND_MINIMUM_PHOTOS = 10;
 export const FIND_MINIMUM_BOXES = 5;
@@ -374,8 +375,9 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
 // ----------------------------------------------------------------------------- training
 
 export function FindTrainer({ dataset, beginner, running, busyElsewhere, onStart, onStop }: {
-  dataset: DatasetSummary; beginner: boolean; running: SavedModel | null; busyElsewhere: boolean; onStart: () => void; onStop: (id: string) => void;
+  dataset: DatasetSummary; beginner: boolean; running: SavedModel | null; busyElsewhere: boolean; onStart: (detector: "accurate" | "fast") => void; onStop: (id: string) => void;
 }) {
+  const [detector, setDetector] = useState<"accurate" | "fast">("accurate");
   const ready = findReady(dataset);
   const short = dataset.categories.filter((name) => (dataset.counts[name] ?? 0) < FIND_MINIMUM_BOXES);
   return (
@@ -384,20 +386,29 @@ export function FindTrainer({ dataset, beginner, running, busyElsewhere, onStart
         <h2>Teach it to find {dataset.categories.length === 1 ? dataset.categories[0] : "your things"}</h2>
         {running
           ? <button className="button button-small" onClick={() => onStop(running.id)}>Stop</button>
-          : <button className="button button-small button-primary" disabled={!ready || busyElsewhere} onClick={onStart}>Start</button>}
+          : <button className="button button-small button-primary" disabled={!ready || busyElsewhere} onClick={() => onStart(detector)}>Start</button>}
       </div>
       <p className="muted small">It starts from a model that can already find 80 everyday kinds of thing, and learns yours from your boxes.</p>
+      {!running && (
+        <fieldset className="dataset-kind find-detector field-note">
+          <legend className="small">Which detector?</legend>
+          <label><input type="radio" name={`detector-${dataset.id}`} checked={detector === "accurate"} onChange={() => setDetector("accurate")} />
+            <span><strong>Accurate</strong> <span className="muted small">Best at small and crowded things. For this computer.</span></span></label>
+          <label><input type="radio" name={`detector-${dataset.id}`} checked={detector === "fast"} onChange={() => setDetector("fast")} />
+            <span><strong>Fast</strong> <span className="muted small">A fifth of the size, and can become a web app for phones. Misses more small things.</span></span></label>
+        </fieldset>
+      )}
       <Why>
         {beginner
           ? "The starting model learned from over 100,000 photos with boxes, so it already knows what edges, shapes and objects look like. Only its last step is swapped for one that names your things, then the whole model is adjusted on your photos. A fifth of your photos are kept back to check it honestly."
-          : "Faster R-CNN, MobileNetV3-Large 320 FPN backbone, COCO weights from torchvision. Box predictor replaced, full fine-tune with SGD (lr 0.01, momentum 0.9, cosine), random horizontal flips. The checkpoint with the lowest held-back loss is kept."}
+          : "Accurate: Faster R-CNN, MobileNetV3-Large 320 FPN, 19M parameters. Fast: SSDlite320, MobileNetV3-Large, 3.4M parameters, pretrained batch norm kept frozen. Both use COCO weights from torchvision with the class predictor replaced, a full fine-tune with SGD (lr 0.01, momentum 0.9, cosine) and random horizontal flips. The checkpoint with the lowest held-back loss is kept."}
       </Why>
       {running && (
         <div className="field-note" role="status">
           <progress className="train-progress" max={running.stepsTotal || 1} value={running.stepsDone} aria-label="Progress" />
           <p className="muted small">
             {!running.device
-              ? "Getting ready. The first run downloads the starting model, about 75 MB."
+              ? "Getting ready. The first run downloads the starting model."
               : `Step ${running.stepsDone} of ${running.stepsTotal || "?"}, learning from ${running.trainCount} photos and checking on ${running.checkCount}, using ${running.device}.`}
           </p>
         </div>
@@ -527,9 +538,10 @@ export function FindTry({ model, beginner }: { model: SavedModel; beginner: bool
   const [sure, setSure] = useState(0.5);
   const [saved, setSaved] = useState(0.5);
   const [problem, setProblem] = useState<string | null>(null);
+  const [detector, setDetector] = useState<"accurate" | "fast" | null>(null);
   useEffect(() => () => { if (chosen) URL.revokeObjectURL(chosen.src); }, [chosen]);
   useEffect(() => {
-    api.fetchFindSettings(model.id).then((reply) => { setSure(reply.sure); setSaved(reply.sure); }).catch(() => undefined);
+    api.fetchFindSettings(model.id).then((reply) => { setSure(reply.sure); setSaved(reply.sure); setDetector(reply.detector); }).catch(() => undefined);
   }, [model.id]);
 
   const keep = async (value: number) => {
@@ -544,7 +556,7 @@ export function FindTry({ model, beginner }: { model: SavedModel; beginner: bool
   return (
     <section className="card">
       <h2>Try it</h2>
-      <p className="muted small">{model.projectName} · finds {categories.join(", ")} · data v{model.datasetVersion ?? "?"}</p>
+      <p className="muted small">{model.projectName} · finds {categories.join(", ")}{detector ? ` · ${detector} detector` : ""} · data v{model.datasetVersion ?? "?"}</p>
       <div className="label-buttons field-note" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
         <label className="button button-small">
           Choose a photo
@@ -567,6 +579,8 @@ export function FindTry({ model, beginner }: { model: SavedModel; beginner: bool
         <p className="muted small">{Math.round(sure * 100)}%{sure === saved ? " · in use for photos, the webcam and downloads" : " · let go to use it"}. Lower it if it misses things; raise it if it boxes things that aren't there.</p>
         {problem && <p className="small tone-bad" role="alert">{problem}</p>}
       </div>
+      {detector === "fast" && <ModelApp jobId={model.id} beginner={beginner} example={`beep when it sees a ${categories[0] ?? "cup"}`} />}
+      {detector === "accurate" && <p className="muted small field-note">To make a web app for phones, train again with the Fast detector. This one is too big for a web page.</p>}
     </section>
   );
 }

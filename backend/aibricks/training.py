@@ -584,9 +584,11 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
 
 def _require_idle(dataset: str) -> None:
     """Training needs the computer to itself, and a copy of data that isn't changing underneath it."""
-    from . import datasets, experiments, health  # imported here, because they import this module
+    from . import datasets, experiments, health, labelling  # imported here, because they import this module
     if experiments.blocks():
         raise TrainingError(409, experiments.blocks())
+    if labelling.is_suggesting():
+        raise TrainingError(409, "Wait for the model to finish making suggestions.")
     if health.is_checking():
         raise TrainingError(409, "Wait for the label check to finish. Both need this computer's full attention.")
     if dataset != DEFAULT_DATASET:

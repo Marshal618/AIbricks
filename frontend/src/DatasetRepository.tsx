@@ -464,10 +464,10 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
     }
   };
 
-  const startFind = async () => {
+  const startFind = async (detector: "accurate" | "fast") => {
     setProblem(null);
     try {
-      await api.trainFindModel(dataset.id);
+      await api.trainFindModel(dataset.id, detector);
       await load();
       onChanged();
     } catch (error) {
@@ -532,7 +532,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       {failed && <div className="result result-fail" role="alert"><p><strong>The last training run failed.</strong> {failed.error}</p></div>}
       <h2 className="section-title">Train</h2>
       {dataset.goal === "unusual" && <UnusualTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startUnusual()} onStop={(id) => void stop(id)} />}
-      {dataset.goal === "find" && <FindTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startFind()} onStop={(id) => void stop(id)} />}
+      {dataset.goal === "find" && <FindTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={(detector) => void startFind(detector)} onStop={(id) => void stop(id)} />}
       {dataset.goal === "pose" && <PoseTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startPose()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "image" && (dataset.goal ?? "sort") === "sort" && (
         <div className="train-choices">

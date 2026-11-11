@@ -168,3 +168,62 @@ def test_it_learns_to_find_the_squares(workspace):  # noqa: F811
     assert client.get(f"/api/models/{job['id']}/card").status_code == 200
     download = client.get(f"/api/train/{job['id']}/download")
     assert download.status_code == 200 and len(download.content) > 1_000_000
+
+    # The accurate detector is too big for a web page.
+    app_page = client.get(f"/api/train/{job['id']}/app")
+    assert app_page.status_code == 422 and "fast detector" in app_page.json()["detail"]["message"]
+    kit = client.get(f"/api/train/{job['id']}/pi")
+    assert kit.status_code == 422 and "too big and slow for a Raspberry Pi" in kit.json()["detail"]["message"]
+
+
+def test_the_fast_detector_learns_and_becomes_an_app(workspace, tmp_path):  # noqa: F811
+    dataset, truth = create(16)
+    box_all(dataset, truth)
+    assert client.post(f"/api/datasets/{dataset}/train-find", params={"detector": "tiny"}, headers=JSON).status_code == 422
+    started = client.post(f"/api/datasets/{dataset}/train-find", params={"detector": "fast"}, headers=JSON)
+    assert started.status_code == 200, started.text
+    job = wait()
+    assert job["status"] == "finished", job["error"]
+    metrics = job["metrics"]
+    assert metrics["found"] >= 0.8 * (metrics["found"] + metrics["missed"]) and metrics["map50"] > 0.6, metrics
+    assert client.get(f"/api/models/{job['id']}/find").json()["detector"] == "fast"
+
+    data, boxes = photo(1001)
+    found = client.post(f"/api/train/{job['id']}/predict-live", content=data, headers=BINARY).json()
+    assert found["counts"]["Square"] == 3, found
+    for real in boxes:
+        assert any(abs(box["x"] - real["x"]) < 0.06 and abs(box["y"] - real["y"]) < 0.06 for box in found["boxes"])
+    download = client.get(f"/api/train/{job['id']}/download")
+    assert download.status_code == 200 and len(download.content) < 20_000_000  # about a fifth of the accurate one
+
+    # Its web app carries the detector, which answers the page's check exactly as PyTorch did.
+    import base64
+    import json
+    import math
+    import re
+    import onnxruntime
+    from aibricks import webapp
+    assert client.put(f"/api/models/{job['id']}/find", json={"sure": 0.7}).status_code == 200
+    page = client.get(f"/api/train/{job['id']}/app")
+    assert page.status_code == 200, page.text
+    settings = json.loads(re.search(r'<script id="settings" type="application/json">(.*?)</script>', page.text, re.S).group(1))
+    assert settings["kind"] == "detect" and settings["labels"] == ["Square"] and settings["sure"] == 0.7
+    assert settings["about"] == "Finds and counts: Square." and settings["nothing"] == "Nothing found."
+    session = onnxruntime.InferenceSession(base64.b64decode(re.search(r'<script id="model" type="application/octet-stream">(.*?)</script>', page.text, re.S).group(1)))
+    pattern = np.array([math.sin(i * 0.37) * 0.5 + 0.5 for i in range(3 * 320 * 320)], dtype=np.float32).reshape(3, 320, 320)
+    got_boxes, got_scores, _ = session.run(None, {"image": pattern})
+    top = len(settings["check"]["scores"])
+    assert np.allclose(got_scores[:top], settings["check"]["scores"], atol=1e-4)
+    assert np.allclose(got_boxes[:top].reshape(-1), settings["check"]["boxes"], atol=1e-2)
+
+    # So does its Raspberry Pi kit, which counts the squares and uses the sureness set in the app.
+    import pi_kit
+    folder, _ = pi_kit.unpack(client.get(f"/api/train/{job['id']}/pi"), tmp_path)
+    assert json.loads((folder / "settings.json").read_text())["sure"] == 0.7
+    code, out, err = pi_kit.run(folder, "--check")
+    assert code == 0 and "✓" in out, err
+    (tmp_path / "squares.png").write_bytes(data)
+    counted = pi_kit.answers(folder, tmp_path / "squares.png")
+    assert [(a["name"], a["count"]) for a in counted] == [("Square", 3)], counted
+    assert pi_kit.run(folder, "--photo", tmp_path / "squares.png")[1].strip().endswith("Square × 3")
+    assert webapp.RUNTIME_INTEGRITY in page.text and webapp.VISION_URL not in page.text

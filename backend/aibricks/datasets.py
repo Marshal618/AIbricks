@@ -100,7 +100,7 @@ def _summary(meta: dict) -> dict:
         from . import sounds  # Imported here, because sounds imports this module.
         amounts, unsorted = sounds.counts(names, dataset), 0
     else:
-        queue = labelling.text_queue(names, dataset)
+        queue = labelling.text_queue(names, dataset, assist=False)
         amounts, unsorted = queue["counts"], queue["total"]
     return {"description": "", "licence": ""} | meta | {"counts": amounts, "labelled": sum(amounts.values()), "unsorted": unsorted}
 

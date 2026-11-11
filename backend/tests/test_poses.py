@@ -169,6 +169,20 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     nothing = client.post(f"/api/train/{job['id']}/predict-live", content=blank.getvalue(), headers=BINARY).json()
     assert nothing == {"found": False, "answers": [], "points": []}
 
+    # Unsorted photos get suggestions from the pose model; a photo with no hands gets none.
+    client.post("/api/label/images", params={"dataset": dataset}, content=variant(images["Victory"], 700), headers=BINARY)
+    empty = io.BytesIO()
+    Image.new("RGB", (320, 240), (200, 180, 150)).save(empty, "PNG")
+    client.post("/api/label/images", params={"dataset": dataset}, content=empty.getvalue(), headers=BINARY)
+    assert client.post("/api/label/suggest", params={"dataset": dataset}, headers=JSON).status_code == 200
+    deadline = time.time() + 120
+    while client.get("/api/label/images", params={"dataset": dataset}).json()["suggesting"] and time.time() < deadline:
+        time.sleep(0.3)
+    queue = client.get("/api/label/images", params={"dataset": dataset}).json()
+    assert queue["suggestError"] is None and queue["unsuggested"] == 0 and queue["modelCategories"] == sorted(SIGNS)
+    suggestions = [item["suggestion"] for item in queue["items"]]
+    assert suggestions[0]["category"] == "Victory" and suggestions[1] is None
+
     card = client.get(f"/api/models/{job['id']}/card")
     assert card.status_code == 200 and "MediaPipe" in card.text
     download = client.get(f"/api/train/{job['id']}/download")
@@ -183,10 +197,26 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     text = page.text
     assert f'integrity="{webapp.VISION_INTEGRITY}"' in text and "<title>Hand signs</title>" in text
     settings = json.loads(re.search(r'<script id="settings" type="application/json">(.*?)</script>', text, re.S).group(1))
-    assert settings["kind"] == "pose" and settings["points"] == "hands" and settings["labels"] == sorted(SIGNS) and settings["what"] == "hand signs"
+    assert settings["kind"] == "pose" and settings["points"] == "hands" and settings["labels"] == sorted(SIGNS) and settings["about"].startswith("Sorts hand signs")
     finder = base64.b64decode(re.search(r'<script id="finder" type="application/octet-stream">(.*?)</script>', text, re.S).group(1))
     assert hashlib.sha256(finder).hexdigest() == "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1"
     network = onnxruntime.InferenceSession(base64.b64decode(re.search(r'<script id="model" type="application/octet-stream">(.*?)</script>', text, re.S).group(1)))
     pattern = np.array([[math.sin(i * 0.37) for i in range(settings["features"])]], dtype=np.float32)
     assert np.allclose(network.run(None, {"features": pattern})[0][0], settings["check"], atol=1e-4)
     assert len(settings["sample"]["features"]) == settings["features"]
+
+    # The Raspberry Pi kit carries both models too, measures points the same way and names the signs.
+    import pi_kit
+    folder, files = pi_kit.unpack(client.get(f"/api/train/{job['id']}/pi"), tmp_path)
+    assert files == {"model.onnx", "points.task", "settings.json", "run.py", "setup.sh", "requirements.txt", "README.md"}
+    assert "mediapipe" in (folder / "requirements.txt").read_text()
+    code, out, err = pi_kit.run(folder, "--check")
+    assert code == 0 and "✓" in out, err
+    for category, image in images.items():
+        path = tmp_path / f"{category}.png"
+        path.write_bytes(variant(image, 500))
+        assert pi_kit.answers(folder, path)[0]["name"] == category
+    nothing = tmp_path / "blank.png"
+    nothing.write_bytes(blank.getvalue())
+    assert pi_kit.answers(folder, nothing) == []
+    assert pi_kit.run(folder, "--photo", nothing)[1].strip().endswith("No hands in view.")
