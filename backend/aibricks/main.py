@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -250,7 +250,7 @@ async def predict_live(job_id: str, request: Request, explain: bool = False) -> 
         reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
     except training.TrainingError as error:
         raise _raise(error) from None
-    if "boxes" in reply or "points" in reply:
+    if "boxes" in reply or "points" in reply or "mask" in reply:
         return reply  # a detector's boxes and counts, or the body and hand points a pose model found
     return reply if explain else {"answers": reply["answers"]}
 
@@ -713,7 +713,7 @@ def move_unusual_line(job_id: str, request: UnusualLine) -> dict:
 
 
 class BoxesIn(BaseModel):
-    boxes: list[dict[str, str | float]] = Field(max_length=finder.MAX_BOXES)
+    boxes: list[dict[str, str | float | list[list[float]]]] = Field(max_length=finder.MAX_BOXES)
 
 
 class SureIn(BaseModel):
@@ -736,6 +736,39 @@ def save_boxes(dataset_id: str, image_id: str, request: BoxesIn) -> dict:
 def clear_boxes(dataset_id: str, image_id: str) -> dict:
     _dataset_reply(finder.clear_boxes, dataset_id, image_id)
     return {"ok": True}
+
+
+class ClicksIn(BaseModel):
+    clicks: list[dict[str, float | bool]] = Field(min_length=1, max_length=outline.MAX_CLICKS)
+
+
+@app.post("/api/datasets/{dataset_id}/outline/{image_id}", dependencies=[Depends(_needs_json)])
+def click_to_outline(dataset_id: str, image_id: str, request: ClicksIn) -> dict:
+    """The outline of the thing around the places clicked, found by MobileSAM on this computer."""
+    return _dataset_reply(outline.click, dataset_id, image_id, request.clicks)
+
+
+@app.post("/api/datasets/{dataset_id}/train-outline", dependencies=[Depends(_needs_json)])
+def train_outline(dataset_id: str) -> dict:
+    """Fine-tunes a pretrained outlining model on an “outline things” dataset's outlined photos."""
+    try:
+        return {"job": training.public(outline.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/outline")
+def outline_settings(job_id: str) -> dict:
+    return _dataset_reply(outline.details, job_id)
+
+
+@app.get("/api/models/{job_id}/outline-review/{number}")
+def outline_review_image(job_id: str, number: int) -> FileResponse:
+    try:
+        path = outline.review_image(job_id, number)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return FileResponse(path, media_type="image/png", headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/datasets/{dataset_id}/train-find", dependencies=[Depends(_needs_json)])
@@ -952,6 +985,48 @@ def table_model_schema(job_id: str) -> dict:
 @app.post("/api/models/{job_id}/try-row")
 def try_table_model(job_id: str, request: RowToTry) -> dict:
     return _dataset_reply(tables.try_row, job_id, request.values)
+
+
+# ------------------------------------------------------------------- forecasting
+
+class ForecastTraining(BaseModel):
+    when: str = Field(max_length=500)
+    value: str = Field(min_length=1, max_length=500)
+    horizon: int = Field(ge=1, le=forecast.MAX_HORIZON)
+    combine: Literal["mean", "sum"] = "mean"
+
+
+class ForecastFrom(BaseModel):
+    values: list[float] = Field(min_length=1, max_length=forecast.MAX_VALUES_SENT)
+
+
+@app.get("/api/datasets/{dataset_id}/forecast/analysis")
+def analyse_forecast(
+    dataset_id: str,
+    when: str | None = Query(default=None, max_length=500),
+    value: str | None = Query(default=None, max_length=500),
+    horizon: int | None = Query(default=None, ge=1, le=forecast.MAX_HORIZON),
+    combine: Literal["mean", "sum"] | None = None,
+) -> dict:
+    return _dataset_reply(forecast.analyse, dataset_id, when, value, horizon, combine)
+
+
+@app.post("/api/datasets/{dataset_id}/train-forecast")
+def train_forecast_model(dataset_id: str, request: ForecastTraining) -> dict:
+    try:
+        return {"job": training.public(forecast.start(dataset_id, request.when, request.value, request.horizon, request.combine))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/forecast")
+def forecast_details(job_id: str) -> dict:
+    return _dataset_reply(forecast.details, job_id)
+
+
+@app.post("/api/models/{job_id}/forecast-from")
+def forecast_from_values(job_id: str, request: ForecastFrom) -> dict:
+    return _dataset_reply(forecast.forecast_from, job_id, request.values)
 
 
 # ------------------------------------------------------------------- data health

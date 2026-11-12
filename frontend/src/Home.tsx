@@ -25,6 +25,8 @@ const KIND = {
   anomaly: { name: "Unusual photos", className: "is-image" },
   pose: { name: "Poses", className: "is-image" },
   detect: { name: "Find things", className: "is-image" },
+  outline: { name: "Outlines", className: "is-image" },
+  forecast: { name: "Forecast", className: "is-table" },
 } as const;
 
 const STATUS: Record<string, { name: string; className: string; mark: string }> = {

@@ -512,6 +512,28 @@ def _review_detect(job: Job) -> None:
     _save_held_out(job, "detect", [(row["file"], len(row["real"]), row["right"]) for row in rows])
 
 
+def _review_outline(job: Job) -> None:
+    """Keeps how closely each held-back photo was outlined, worst first, for showing on the photos."""
+    folder = _folder(job) / "data"
+    rows = json.loads((folder / "review.json").read_text(encoding="utf-8"))
+    metrics = json.loads((folder / "metrics.json").read_text(encoding="utf-8"))
+    rows.sort(key=lambda row: (row["score"], row["file"]))
+    # The outlines it drew are kept with the run (no photos), for the photos still kept in the dataset.
+    kept = _folder(job) / "outline-review"
+    shutil.rmtree(kept, ignore_errors=True)
+    kept.mkdir()
+    for row in rows[:DETECT_PHOTOS_KEPT]:
+        os.replace(folder / "review" / f"{row['mask']}.png", kept / f"{row['mask']}.png")
+    job.metrics = metrics | {"photosChecked": rows[:DETECT_PHOTOS_KEPT]}
+    job.review = {
+        "total": metrics["photos"], "correct": metrics["allRight"],
+        "categories": {name: {"correct": value["good"], "total": value["photos"]} for name, value in metrics["perCategory"].items()},
+        "mistakeCount": metrics["photos"] - metrics["allRight"], "mistakes": [],
+    }
+    # Compared like a number: how far each photo's outline is from a perfect match.
+    _save_held_out(job, "outline", [(row["file"], 1.0, row["score"]) for row in rows])
+
+
 def _review_table(job: Job) -> None:
     """Keeps train.py's scores and column importance, which hold no rows of data."""
     metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
@@ -523,6 +545,13 @@ def _review_table(job: Job) -> None:
             "total": metrics["total"], "correct": metrics["correct"], "categories": metrics["perClass"],
             "mistakeCount": metrics["total"] - metrics["correct"], "mistakes": [],
         }
+
+
+def _review_forecast(job: Job) -> None:
+    """Keeps train.py's scores, which hold no readings, and each checked guess under its time only."""
+    job.metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
+    held = json.loads((_folder(job) / "data" / "held_out.json").read_text(encoding="utf-8"))
+    _save_held_out(job, "forecast", [tuple(row) for row in held])
 
 
 def _summarise_review(job: Job, rows: list[dict]) -> None:
@@ -562,7 +591,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose, "outline": _review_outline, "forecast": _review_forecast}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -672,7 +701,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose"):
+    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -900,6 +929,9 @@ def predict_live(job_id: str, data: bytes, explain_it: bool = False) -> dict:
     if job.task == "detect":
         from . import finder  # imported here, because finder imports this module
         return ask_live(job, finder.LIVE_RUNNER, data, False, "The model couldn't read this image.")
+    if job.task == "outline":
+        from . import outline  # imported here, because outline imports this module
+        return ask_live(job, outline.LIVE_RUNNER, data, False, "The model couldn't read this image.")
     if job.task == "pose":
         from . import poses  # imported here, because poses imports this module
         return ask_live(job, poses.LIVE_RUNNER, data, False, "The model couldn't read this image.")

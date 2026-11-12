@@ -126,6 +126,38 @@ print(json.dumps({'kind': 'detect', 'labels': settings['categories'], 'size': 32
 """
 
 
+# An outlining model, with the photo's normalising built in so the page passes plain 0 to 1 pixels.
+# Every 997th number it gives for a fixed pattern checks the page.
+_EXPORT_OUTLINE = """
+import json, math, sys, warnings
+sys.path.insert(0, '.')
+warnings.filterwarnings('ignore')
+import torch
+import model as m
+settings = json.loads(open('model/settings.json', encoding='utf-8').read())
+network = m.build(settings['categories'], pretrained=False)
+network.load_state_dict(torch.load('model/model.pt', map_location='cpu', weights_only=True))
+network.eval()
+class Flat(torch.nn.Module):
+    def __init__(self, inner):
+        super().__init__()
+        self.inner = inner
+        self.register_buffer('mean', torch.tensor(m.MEAN).reshape(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor(m.STD).reshape(1, 3, 1, 1))
+    def forward(self, image):
+        return self.inner((image - self.mean) / self.std)['out']
+flat = Flat(network).eval()
+side = m.SIZE
+pattern = torch.tensor([math.sin(i * 0.37) * 0.5 + 0.5 for i in range(3 * side * side)], dtype=torch.float32).reshape(1, 3, side, side)
+with torch.no_grad():
+    expected = flat(pattern).reshape(-1)[::997].tolist()
+torch.onnx.export(flat, (pattern,), 'app.onnx.partial', dynamo=False, opset_version=17, input_names=['image'], output_names=['logits'])
+import os
+os.replace('app.onnx.partial', 'app.onnx')
+print(json.dumps({'kind': 'outline', 'labels': settings['categories'], 'size': side, 'colours': m.COLOURS, 'check': {'step': 997, 'values': expected}}))
+"""
+
+
 def _export(job: training.Job) -> dict:
     """Exports the model once. A trained model never changes, so later pages reuse the file."""
     folder = training._folder(job)
@@ -135,7 +167,7 @@ def _export(job: training.Job) -> dict:
     try:
         with training._predictions:
             done = subprocess.run(
-                [sys.executable, "-I", "-c", {"pose": _EXPORT_POSE, "detect": _EXPORT_DETECT}.get(job.task, _EXPORT)], cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
+                [sys.executable, "-I", "-c", {"pose": _EXPORT_POSE, "detect": _EXPORT_DETECT, "outline": _EXPORT_OUTLINE}.get(job.task, _EXPORT)], cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace", timeout=training.PREDICT_LIMIT_SECONDS,
             )
     except subprocess.TimeoutExpired:
@@ -150,8 +182,8 @@ def _export(job: training.Job) -> dict:
 
 def _job(job_id: str, where: str = "a web page", made: str = "an app") -> training.Job:
     job = training.stored(job_id)
-    if job.task not in ("image", "pose", "detect"):
-        raise TrainingError(422, f"{made[0].upper()}{made[1:]} can only be made from a photo model, pose model or fast find-things model for now.")
+    if job.task not in ("image", "pose", "detect", "outline"):
+        raise TrainingError(422, f"{made[0].upper()}{made[1:]} can only be made from a photo, pose, outlining or fast find-things model for now.")
     if job.status == "running":
         raise TrainingError(409, "This model is still training.")
     if not job.hasModel:
@@ -173,9 +205,13 @@ def page(job_id: str) -> tuple[str, str]:
     if len(model) > MAX_APP_MODEL_BYTES:
         raise TrainingError(413, f"This model is {len(model) // (1024 * 1024)} MB, too big to put in a web page. Smaller models, like the ones built from blocks, work best.")
     # No "<" at all, so nothing in a name can end the script block or change how it's read.
-    pose, detect = job.task == "pose", job.task == "detect"
+    pose, detect, outlining = job.task == "pose", job.task == "detect", job.task == "outline"
     labels = ", ".join(info["labels"])
-    if detect:
+    rule = {}
+    if outlining:
+        about, nothing = f"Outlines {labels}, and shows how much of the view each one covers.", "Nothing outlined."
+        rule = {"rule": {"words": ["When", "covers at least", "% of the view,"], "min": 1, "start": 20}}
+    elif detect:
         about, nothing = f"Finds and counts: {labels}.", "Nothing found."
     elif pose:
         hands = info.get("points") == "hands"
@@ -183,14 +219,14 @@ def page(job_id: str) -> tuple[str, str]:
     else:
         about, nothing = f"Sorts photos into: {labels}.", ""
     extra_settings = {"sure": _detect_settings(job).get("sure", 0.5)} if detect else {}  # the slider may have moved since export
-    settings = json.dumps({**info, **extra_settings, "name": job.projectName, "trainedAt": job.startedAt, "about": about, "nothing": nothing}).replace("<", "\\u003c")
+    settings = json.dumps({**info, **extra_settings, **rule, "name": job.projectName, "trainedAt": job.startedAt, "about": about, "nothing": nothing}).replace("<", "\\u003c")
     finder = training._folder(job) / "model" / "points.task"
     extra = ""
     if pose:
         extra = (f'<script id="finder" type="application/octet-stream">{base64.b64encode(finder.read_bytes()).decode()}</script>\n'
                  f'<script src="{VISION_URL}vision_bundle.js" integrity="{VISION_INTEGRITY}" crossorigin="anonymous"></script>')
     text = (_PAGE
-            .replace("__MODEL_CODE__", (_POSE_CODE if pose else _DETECT_CODE if detect else _IMAGE_CODE).replace("__VISION__", VISION_URL))
+            .replace("__MODEL_CODE__", (_POSE_CODE if pose else _DETECT_CODE if detect else _OUTLINE_CODE if outlining else _IMAGE_CODE).replace("__VISION__", VISION_URL))
             .replace("__EXTRA__", extra)
             .replace("__TITLE__", html.escape(job.projectName))
             .replace("__RUNTIME__", RUNTIME_URL)
@@ -433,6 +469,87 @@ async function load() {
 
 """
 
+_OUTLINE_CODE = r"""// ---------------------------------------------------------------- the model
+
+// The model reads a SIDE by SIDE picture and scores each thing at every spot; the best score wins.
+const SIDE = S.size;
+let painted = null;
+
+function prepare(source, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = SIDE; canvas.height = SIDE;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, 0, 0, width, height, 0, 0, SIDE, SIDE);
+  const pixels = context.getImageData(0, 0, SIDE, SIDE).data, plane = SIDE * SIDE, data = new Float32Array(3 * plane);
+  for (let i = 0; i < plane; i++) for (let c = 0; c < 3; c++) data[c * plane + i] = pixels[i * 4 + c] / 255;
+  return data;
+}
+
+async function run(data) {
+  const output = await session.run({ image: new ort.Tensor("float32", data, [1, 3, SIDE, SIDE]) });
+  return output.logits.data;
+}
+
+function labelsOf(logits) {
+  const plane = SIDE * SIDE, classes = S.labels.length + 1, labels = new Uint8Array(plane);
+  for (let i = 0; i < plane; i++) {
+    let best = 0, top = logits[i];
+    for (let c = 1; c < classes; c++) { const v = logits[c * plane + i]; if (v > top) { top = v; best = c; } }
+    labels[i] = best;
+  }
+  return labels;
+}
+
+function draw(labels, element, width, height, mirrored) {
+  if (!painted) { painted = document.createElement("canvas"); painted.width = SIDE; painted.height = SIDE; }
+  const small = painted.getContext("2d"), picture = small.createImageData(SIDE, SIDE);
+  const colours = S.colours.map((hex) => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)));
+  labels.forEach((label, i) => {
+    if (!label) return;
+    const [r, g, b] = colours[(label - 1) % colours.length];
+    picture.data.set([r, g, b, 150], i * 4);
+  });
+  small.putImageData(picture, 0, 0);
+  const canvas = $("overlay"), ratio = window.devicePixelRatio || 1, area = shownArea(element, width, height);
+  canvas.width = Math.round(area.frame.width * ratio);
+  canvas.height = Math.round(area.frame.height * ratio);
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  if (mirrored) { context.translate(area.left * 2 + area.width, 0); context.scale(-1, 1); }
+  context.drawImage(painted, area.left, area.top, area.width, area.height);
+}
+
+async function answer(source, width, height, mirrored) {
+  const labels = labelsOf(await run(prepare(source, width, height)));
+  draw(labels, source, width, height, mirrored);
+  const counts = new Array(S.labels.length + 1).fill(0);
+  labels.forEach((label) => { counts[label]++; });
+  window.lastAreas = Object.fromEntries(S.labels.map((name, i) => [name, counts[i + 1] / labels.length]));
+  // One row per thing it outlined: how much of the view it covers.
+  const rows = S.labels.map((name, i) => ({ name, chance: counts[i + 1] / labels.length })).filter((row) => row.chance >= 0.005);
+  return rows.length ? rows.sort((a, b) => b.chance - a.chance) : null;
+}
+
+async function load() {
+  if (typeof ort === "undefined") { say("The model runner couldn't load. Connect to the internet once to open this page.", "bad"); return; }
+  ort.env.wasm.wasmPaths = "__RUNTIME__";
+  ort.env.wasm.numThreads = 1;
+  const bytes = await (await fetch(`data:application/octet-stream;base64,${document.getElementById("model").textContent.trim()}`)).arrayBuffer();
+  session = await ort.InferenceSession.create(bytes, { executionProviders: ["wasm"] });
+  // A fixed pattern, run by PyTorch when the page was made, must give the same scores here.
+  const got = await run(Float32Array.from({ length: 3 * SIDE * SIDE }, (_, i) => Math.sin(i * 0.37) * 0.5 + 0.5));
+  let gap = 0;
+  S.check.values.forEach((v, i) => { gap = Math.max(gap, Math.abs(v - got[i * S.check.step]) / Math.max(1, Math.abs(v))); });
+  window.selfCheckGap = gap;
+  if (gap < 1e-3) say("✓ Model loaded and checked. It runs on this device.", "good");
+  else say("This model gave different answers here than when it was made, so its guesses may be wrong.", "bad");
+  $("camera").disabled = false;
+  $("choose").disabled = false;
+}
+
+"""
+
 _PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -537,6 +654,8 @@ __EXTRA__
 const S = JSON.parse(document.getElementById("settings").textContent);
 const $ = (id) => document.getElementById(id);
 const FRAMES_TO_FIRE = 3;
+// How a rule reads: most models are some percent sure; an outlining model covers some share of the view.
+const RULE = S.rule || { words: ["When it sees", "at least", "% sure,"], min: 50, start: 80 };
 const COOLDOWN_MS = 2000;
 let session = null, stream = null, running = false;
 
@@ -697,14 +816,14 @@ function drawRules() {
     S.labels.forEach((name) => category.add(new Option(name, name, false, name === rule.category)));
     category.onchange = () => { rule.category = category.value; save(); };
     const threshold = document.createElement("input");
-    Object.assign(threshold, { type: "number", min: 50, max: 99, value: rule.threshold });
+    Object.assign(threshold, { type: "number", min: RULE.min, max: 99, value: rule.threshold });
     threshold.setAttribute("aria-label", "How sure, in percent");
-    threshold.onchange = () => { rule.threshold = Math.min(99, Math.max(50, Number(threshold.value) || 80)); save(); };
+    threshold.onchange = () => { rule.threshold = Math.min(99, Math.max(RULE.min, Number(threshold.value) || RULE.start)); save(); };
     const action = document.createElement("select");
     action.setAttribute("aria-label", "Action");
     Object.entries(ACTIONS).forEach(([value, label]) => action.add(new Option(label, value, false, value === rule.action)));
     action.onchange = () => { rule.action = action.value; save(); drawRules(); };
-    const parts = [text("When it sees"), category, text("at least"), threshold, text("% sure,"), action];
+    const parts = [text(RULE.words[0]), category, text(RULE.words[1]), threshold, text(RULE.words[2]), action];
     if (rule.action === "message" || rule.action === "send") {
       const extra = document.createElement("input");
       Object.assign(extra, { type: rule.action === "send" ? "url" : "text", value: rule.text || "", placeholder: rule.action === "send" ? "https://ntfy.sh/your-topic" : "Message to show" });
@@ -724,7 +843,7 @@ function drawRules() {
 
 function text(value) { const span = document.createElement("span"); span.textContent = value; return span; }
 
-$("add").onclick = () => { rules.push({ category: S.labels[0], threshold: 80, action: "beep", text: "" }); save(); drawRules(); };
+$("add").onclick = () => { rules.push({ category: S.labels[0], threshold: RULE.start, action: "beep", text: "" }); save(); drawRules(); };
 drawRules();
 
 load().catch((error) => say(`The model couldn't start: ${error && error.message ? error.message : error}`, "bad"));

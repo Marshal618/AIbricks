@@ -7,12 +7,14 @@ import { WhereItFails } from "./Slices";
 import { TrainingCheck } from "./TrainingCheck";
 import { UnusualLine, UnusualTrainer, UnusualTry } from "./Unusual";
 import { FindResults, FindTrainer, FindTry } from "./Find";
+import { OutlineResults, OutlineTrainer, OutlineTry } from "./OutlineThings";
 import { Why } from "./Ui";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { PoseResults, PoseTrainer, PoseTry } from "./Pose";
 import { CompareModels, ModelCardView } from "./ModelInsights";
 import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
+import { ForecastResult, ForecastTrainer } from "./ForecastModels";
 import type { DatasetPreview, DatasetSummary, GraphPayload, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
@@ -259,7 +261,7 @@ export function DatasetVersions({ dataset, beginner, onRestored }: { dataset: Da
 
 export function score(model: SavedModel) {
   if (model.status === "running") return "Training";
-  if (model.metrics?.task === "number") return `±${(model.metrics.mae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  if (model.metrics?.task === "number" || model.metrics?.task === "forecast") return `±${(model.metrics.mae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
   if (!model.best || model.best.accuracy === null) return model.status === "failed" ? "Failed" : "No score";
   return `${Math.round(model.best.accuracy * 100)}%`;
 }
@@ -422,6 +424,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
   const [problem, setProblem] = useState<string | null>(null);
   const [busyElsewhere, setBusyElsewhere] = useState(false);
   const [cardFor, setCardFor] = useState<string | null>(null);
+  const [tableJob, setTableJob] = useState<"predict" | "forecast" | null>(null);
 
   const load = useCallback(async () => {
     const [rows, versions, latest] = await Promise.all([api.fetchDatasetModels(dataset.id), api.fetchVersions(dataset.id), api.fetchTraining()]);
@@ -475,6 +478,17 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
     }
   };
 
+  const startOutline = async () => {
+    setProblem(null);
+    try {
+      await api.trainOutlineModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
   const startPose = async () => {
     setProblem(null);
     try {
@@ -514,6 +528,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
   const newestUnusual = models?.find((model) => model.task === "anomaly" && model.status === "finished" && model.hasModel) ?? null;
   const newestFind = models?.find((model) => model.task === "detect" && model.status === "finished" && model.hasModel) ?? null;
   const newestPose = models?.find((model) => model.task === "pose" && model.status === "finished" && model.hasModel) ?? null;
+  const newestOutline = models?.find((model) => model.task === "outline" && model.status === "finished" && model.hasModel) ?? null;
+  const newestForecast = models?.find((model) => model.task === "forecast" && model.status === "finished" && model.hasModel) ?? null;
+  const tableChoice = tableJob ?? (models?.find((model) => model.task === "table" || model.task === "forecast")?.task === "forecast" ? "forecast" : "predict");
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -533,6 +550,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       <h2 className="section-title">Train</h2>
       {dataset.goal === "unusual" && <UnusualTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startUnusual()} onStop={(id) => void stop(id)} />}
       {dataset.goal === "find" && <FindTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={(detector) => void startFind(detector)} onStop={(id) => void stop(id)} />}
+      {dataset.goal === "outline" && <OutlineTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startOutline()} onStop={(id) => void stop(id)} />}
       {dataset.goal === "pose" && <PoseTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startPose()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "image" && (dataset.goal ?? "sort") === "sort" && (
         <div className="train-choices">
@@ -546,15 +564,26 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       )}
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
-      {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
-      {(newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {dataset.kind === "table" && (
+        <fieldset className="table-job">
+          <legend className="small">What should the model do?</legend>
+          <label><input type="radio" name="table-job" checked={tableChoice === "predict"} disabled={!!running} onChange={() => setTableJob("predict")} /> Predict a column from the other columns</label>
+          <label><input type="radio" name="table-job" checked={tableChoice === "forecast"} disabled={!!running} onChange={() => setTableJob("forecast")} /> Forecast a column's next readings from its past</label>
+        </fieldset>
+      )}
+      {dataset.kind === "table" && tableChoice === "predict" && <TableTrainer dataset={dataset} beginner={beginner} running={running?.task === "table" ? running : null} busyElsewhere={busyElsewhere || running?.task === "forecast"} onStarted={load} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "table" && tableChoice === "forecast" && <ForecastTrainer dataset={dataset} beginner={beginner} running={running?.task === "forecast" ? running : null} busyElsewhere={busyElsewhere || running?.task === "table"} onStarted={load} onStop={(id) => void stop(id)} />}
+      {(newestForecast || newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose || newestOutline) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
       {newestPose && <PoseTry key={newestPose.id} model={newestPose} kind={newestPose.metrics?.points ?? dataset.points ?? "body"} beginner={beginner} />}
       {newestPose && <PoseResults key={`r-${newestPose.id}`} model={newestPose} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
+      {newestOutline && <OutlineTry key={newestOutline.id} model={newestOutline} beginner={beginner} />}
+      {newestOutline && <OutlineResults key={`r-${newestOutline.id}`} model={newestOutline} datasetId={dataset.id} beginner={beginner} />}
       {newestFind && <FindTry key={newestFind.id} model={newestFind} beginner={beginner} />}
       {newestFind && <FindResults key={`r-${newestFind.id}`} model={newestFind} datasetId={dataset.id} beginner={beginner} />}
       {newestUnusual && <UnusualTry key={newestUnusual.id} model={newestUnusual} beginner={beginner} />}
       {newestUnusual && <UnusualLine key={`line-${newestUnusual.id}`} model={newestUnusual} beginner={beginner} />}
-      {newestTable && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
+      {newestForecast && (tableChoice === "forecast" || !newestTable) && <ForecastResult key={newestForecast.id} model={newestForecast} beginner={beginner} />}
+      {newestTable && (tableChoice === "predict" || !newestForecast) && <TableResult key={newestTable.id} model={newestTable} beginner={beginner} />}
       {newestPhoto && (
         <section className="card">
           <h2>Try it</h2>
@@ -603,7 +632,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
                 <span className="muted small">
                   {model.datasetVersion !== null ? `Data v${model.datasetVersion}${known.has(model.datasetVersion) ? "" : " (deleted)"}` : "No data version"}
                   {" · "}{when(model.startedAt)}
-                  {model.metrics?.task === "number"
+                  {model.metrics?.task === "forecast"
+                    ? ` · typical error up to ${model.metrics.horizon} ${model.metrics.stepName}${model.metrics.horizon === 1 ? "" : "s"} ahead; the same as last time would be off by ${(model.metrics.maeLast ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                    : model.metrics?.task === "number"
                     ? ` · typical error; always guessing the average would be off by ${(model.metrics.baselineMae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                     : model.best && model.task !== "detect" ? ` · guessing would score ${Math.round((model.metrics?.baseline ?? model.baseline) * 100)}%` : ""}
                   {model.review ? ` · ${model.review.correct} of ${model.review.total} held-back right` : ""}

@@ -23,8 +23,8 @@ class DatasetIn(BaseModel):
     kind: str = Field(pattern="^(image|text|table|sound)$")
     categories: list[str] = Field(default_factory=list, max_length=MAX_CATEGORIES)
     # Photos only: sort into categories, learn what normal looks like and spot what's unusual,
-    # find things in photos by drawing boxes around them, or sort body poses or hand signs.
-    goal: str = Field(default="sort", pattern="^(sort|unusual|find|pose)$")
+    # find things in photos by drawing boxes around them, outline them, or sort body poses or hand signs.
+    goal: str = Field(default="sort", pattern="^(sort|unusual|find|pose|outline)$")
     # Sorting poses only: the points of a whole body, or of hands.
     points: str = Field(default="body", pattern="^(body|hands)$")
 
@@ -90,7 +90,7 @@ def _summary(meta: dict) -> dict:
     if meta["kind"] == "table":
         amounts, unsorted = {}, 0
         return {"description": "", "licence": "", "rows": 0, "columns": []} | meta | {"counts": amounts, "labelled": meta.get("rows", 0), "unsorted": unsorted}
-    if meta.get("goal") == "find":
+    if meta.get("goal") in ("find", "outline"):
         from . import finder  # Imported here, because finder imports this module.
         amounts, done, unsorted = finder.counts(meta)
         return {"description": "", "licence": ""} | meta | {"counts": amounts, "labelled": done, "unsorted": unsorted}
@@ -115,6 +115,8 @@ def create(request: DatasetIn) -> dict:
         raise TrainingError(422, "Spotting what's unusual works with photos.")
     if request.goal == "find" and request.kind != "image":
         raise TrainingError(422, "Finding things works with photos.")
+    if request.goal == "outline" and request.kind != "image":
+        raise TrainingError(422, "Outlining things works with photos.")
     if request.goal == "pose" and request.kind != "image":
         raise TrainingError(422, "Sorting poses works with photos.")
     unusual = request.goal == "unusual"
@@ -172,7 +174,7 @@ def preview(dataset: str) -> dict:
     if meta["kind"] == "table":
         return {"categories": [], "sources": [], "table": _table_preview(dataset)}
     rows = []
-    if meta.get("goal") == "find":
+    if meta.get("goal") in ("find", "outline"):
         from . import finder
         boxes = finder.read_boxes(dataset)
         for name in meta["categories"]:
@@ -255,7 +257,7 @@ def rename_category(dataset: str, old: str, new: str) -> dict:
         if source.is_dir():
             shutil.rmtree(target, ignore_errors=True)
             os.replace(source, target)
-        if meta.get("goal") == "find":
+        if meta.get("goal") in ("find", "outline"):
             from . import finder
             finder.rename_category(dataset, old, new)
         labelling.rename_text_label(old, new, dataset)
@@ -277,7 +279,7 @@ def remove_category(dataset: str, name: str) -> dict:
         if problem:
             raise TrainingError(409, problem)
         folder = training._category_folder(name, dataset)
-        if meta.get("goal") == "find":
+        if meta.get("goal") in ("find", "outline"):
             # Its boxes would be lost, so they're saved in a version first and can be restored from it.
             from . import finder, versions
             versions.save_before_change(dataset, f"Saved automatically before removing {name}")

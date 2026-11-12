@@ -89,7 +89,7 @@ def _current_items(dataset: str, meta: dict, extra=()) -> Items:
         with closing(labelling._database(dataset)) as database:
             return [list(row) for row in database.execute("SELECT id, label FROM items WHERE removed = 0 ORDER BY seq")]
     items = []
-    if meta.get("goal") == "find":
+    if meta.get("goal") in ("find", "outline"):
         from . import finder  # Imported here, because finder imports this module.
         boxes = finder.read_boxes(dataset)
         for name in finder.photos(dataset):
@@ -185,7 +185,7 @@ def _store(dataset: str, meta: dict, items: Items, number: int) -> None:
     for item_id, label in items:
         target = objects / item_id
         if not target.exists():
-            folder = labelling.inbox(dataset) if label is None or meta.get("goal") == "find" else training._category_folder(label, dataset)
+            folder = labelling.inbox(dataset) if label is None or meta.get("goal") in ("find", "outline") else training._category_folder(label, dataset)
             _link(folder / item_id, target)
 
 
@@ -204,7 +204,7 @@ def _save(dataset: str, meta: dict, index: dict, items: Items, message: str, aut
     if meta["kind"] == "table":
         version["columns"] = meta.get("columns", [])
     _write_json(_folder(dataset) / f"{number}.json", items)
-    if meta.get("goal") == "find":
+    if meta.get("goal") in ("find", "outline"):
         from . import finder
         _write_json(_folder(dataset) / f"{number}.boxes.json", finder.read_boxes(dataset))
     index = {"next": number + 1, "head": number, "versions": [*index["versions"], version]}
@@ -221,7 +221,7 @@ def _saved_boxes(dataset: str, number: int) -> dict:
 
 def _boxes_changed(dataset: str, meta: dict, index: dict) -> bool:
     """Boxes can move without the things in a photo changing, which the item list alone wouldn't show."""
-    if meta.get("goal") != "find" or not _head(index):
+    if meta.get("goal") not in ("find", "outline") or not _head(index):
         return False
     from . import finder
     return finder.read_boxes(dataset) != _saved_boxes(dataset, _head(index)["number"])
@@ -303,7 +303,7 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
             _link(_table_copy(dataset, version["number"]), run / "data" / "table.csv")
         elif meta["kind"] == "text":
             _freeze_text(dataset, names, items, run)
-        elif meta.get("goal") == "find":
+        elif meta.get("goal") in ("find", "outline"):
             from . import finder
             finder.freeze(dataset, run)
         else:
@@ -388,7 +388,7 @@ def restore(dataset: str, number: int) -> dict:
         if changes is None or _has_changes(changes):
             saved_first = _save(dataset, meta, index, current, f"Saved automatically before restoring v{number}", True)["number"]
             index = _index(dataset)
-        if meta.get("goal") == "find":
+        if meta.get("goal") in ("find", "outline"):
             from . import finder
             photos = sorted({item_id for item_id, _ in items})
             _restore_images(dataset, current, [[item_id, None] for item_id in photos])

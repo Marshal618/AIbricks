@@ -1,4 +1,4 @@
-import type { PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -379,6 +379,23 @@ export const fetchTableSchema = (job: string): Promise<TableSchema> => getJson(`
 
 export const tryTableModel = (job: string, values: Record<string, string>): Promise<{ value?: number; answers?: PredictAnswer[] }> => sendJson(`/api/models/${job}/try-row`, { values });
 
+export function fetchForecastAnalysis(id: string, choice: { when?: string; value?: string; horizon?: number; combine?: "mean" | "sum" } = {}): Promise<ForecastAnalysis> {
+  const query = new URLSearchParams();
+  if (choice.when !== undefined) query.set("when", choice.when);
+  if (choice.value) query.set("value", choice.value);
+  if (choice.horizon) query.set("horizon", String(choice.horizon));
+  if (choice.combine) query.set("combine", choice.combine);
+  return getJson(`/api/datasets/${id}/forecast/analysis?${query}`);
+}
+
+export async function trainForecastModel(id: string, choice: { when: string; value: string; horizon: number; combine: "mean" | "sum" }): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-forecast`, choice);
+}
+
+export const fetchForecast = (job: string): Promise<ForecastDetails> => getJson(`/api/models/${job}/forecast`);
+
+export const forecastFrom = (job: string, values: number[]): Promise<{ values: number[]; low: number[]; high: number[] }> => sendJson(`/api/models/${job}/forecast-from`, { values });
+
 export const fetchHealth = (id: string): Promise<DataHealth> => getJson(`/api/datasets/${id}/health`);
 
 export async function startHealthCheck(id: string): Promise<void> {
@@ -486,7 +503,7 @@ export const datasetPhotoUrl = (dataset: string, category: string, file: string)
 export const fetchBoxes = (dataset: string): Promise<{ photos: BoxedPhoto[]; done: number; total: number }> => getJson(`/api/datasets/${dataset}/boxes`);
 
 export async function saveBoxes(dataset: string, image: string, boxes: Box[]): Promise<{ boxes: Box[] }> {
-  return putJson(`/api/datasets/${dataset}/boxes/${image}`, { boxes: boxes.map(({ category, x, y, w, h }) => ({ category, x, y, w, h })) });
+  return putJson(`/api/datasets/${dataset}/boxes/${image}`, { boxes: boxes.map(({ category, x, y, w, h, points }) => (points ? { category, points } : { category, x, y, w, h })) });
 }
 
 export const clearBoxes = (dataset: string, image: string) => send(`/api/datasets/${dataset}/boxes/${image}`, "DELETE");
@@ -498,6 +515,25 @@ export async function trainFindModel(id: string, detector: "accurate" | "fast" =
 export const fetchFindSettings = (job: string): Promise<{ sure: number; categories: string[]; detector: "accurate" | "fast" }> => getJson(`/api/models/${job}/find`);
 
 export const setFindSure = (job: string, sure: number): Promise<{ sure: number }> => putJson(`/api/models/${job}/find`, { sure });
+
+// ------------------------------------------------------------- outlining things in photos
+
+export interface Click { x: number; y: number; inside: boolean }
+
+export const outlineAt = (dataset: string, image: string, clicks: Click[]): Promise<{ points: [number, number][]; box: { x: number; y: number; w: number; h: number } | null; score: number }> =>
+  sendJson(`/api/datasets/${dataset}/outline/${image}`, { clicks });
+
+export async function trainOutlineModel(id: string): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-outline`);
+}
+
+export const outlineReviewUrl = (job: string, number: number) => `/api/models/${job}/outline-review/${number}`;
+
+export async function findOutlines(job: string, file: Blob): Promise<FoundOutlines> {
+  const response = await sendFile(`/api/train/${job}/predict-live`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
 
 export async function findBoxes(job: string, file: Blob): Promise<FoundBoxes> {
   const response = await sendFile(`/api/train/${job}/predict-live`, file);
