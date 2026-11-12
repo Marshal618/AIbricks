@@ -124,7 +124,21 @@ export interface TableAnalysis {
 }
 
 export interface TableMetrics {
-  task: "category" | "number" | "unusual" | "detect" | "pose" | "outline";
+  task: "category" | "number" | "unusual" | "detect" | "pose" | "outline" | "forecast";
+  /** Forecasting: errors on the most recent readings, for the model and for two simple guesses. */
+  readings?: number;
+  horizon?: number;
+  stepName?: string;
+  season?: number;
+  method?: "model" | "last" | "season";
+  maeModel?: number;
+  maeLast?: number;
+  maeSeason?: number | null;
+  maePerStep?: number[];
+  inside?: number;
+  typical?: number;
+  origins?: number;
+  filled?: number;
   /** Sorting poses: photos where no body or hands could be seen, which it couldn't learn from or answer. */
   points?: "body" | "hands";
   nothingFoundTraining?: number;
@@ -225,7 +239,7 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number; categories?: Record<string, { correct: number; total: number }> } | null;
-  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose" | "outline";
+  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose" | "outline" | "forecast";
   metrics: TableMetrics | null;
   totalEpochs?: number;
   trainCount?: number;
@@ -689,4 +703,46 @@ export interface PoseAnswer {
   answers: PredictAnswer[];
   /** One list per body or hand, of [x, y, how sure it is the point is in view]. */
   points: [number, number, number][][];
+}
+
+export interface ForecastAnalysis {
+  timeColumns: string[];
+  valueColumns: string[];
+  when: string;
+  value: string | null;
+  combine: "mean" | "sum";
+  problems: string[];
+  notes: string[];
+  readings: number;
+  horizon: number;
+  maxHorizon: number;
+  season: number;
+  seasonText: string;
+  stepName: string;
+  duplicates: boolean;
+  start: string | null;
+  end: string | null;
+  recent: { times: string[]; values: number[] };
+  needed: number;
+}
+
+export interface ForecastRange {
+  times: string[];
+  values: number[];
+  low: number[];
+  high: number[];
+}
+
+export interface ForecastDetails {
+  value: string;
+  when: string;
+  stepName: string;
+  horizon: number;
+  context: number;
+  season: number;
+  method: "model" | "last" | "season";
+  readings: number;
+  history: { times: string[]; values: number[] };
+  forecast: ForecastRange;
+  backtest: ForecastRange & { from: string; real: number[] };
 }

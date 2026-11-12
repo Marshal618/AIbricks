@@ -30,13 +30,16 @@ METHODS = {
               "with its last layer replaced and the whole detector fine-tuned on boxed photos.",
     "outline": "LRASPP (Howard et al., 2019) with a MobileNetV3 backbone, pretrained by torchvision, with its last layers "
                "replaced and the whole model fine-tuned on outlined photos. Outlines were drawn with help from MobileSAM.",
+    "forecast": "A small PyTorch network that reads a window of past readings and guesses the next ones. Each window is scaled "
+                "by its own average and spread (as in RevIN, Kim et al., 2022), and a straight-line part (as in DLinear, Zeng et al., "
+                "2023) and a small fully connected part add their guesses together.",
     "pose": "MediaPipe's pose or hand landmarker (Google, Apache 2.0) finds body or hand points, and a small fully "
             "connected network trained on those points, measured from the body or wrist, names the category.",
     "sound": "A frozen pretrained Audio Spectrogram Transformer (MIT/ast-finetuned-audioset-10-10-0.4593) reading 1-second "
              "spectrograms, with a linear classifier trained on each clip and two time-shifted, louder or quieter copies.",
 }
-THINGS = {"outline": "photos", "pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
-THING = {"outline": "photo", "pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
+THINGS = {"forecast": "readings", "outline": "photos", "pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
+THING = {"forecast": "reading", "outline": "photo", "pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
 def _method(job) -> str:
@@ -93,6 +96,9 @@ def _config(job: training.Job) -> dict:
 
 
 def _job_text(job: training.Job, metrics: dict, things: str) -> str:
+    if job.task == "forecast":
+        config = _config(job)
+        return f"forecasts “{config.get('value', 'a column')}” {config.get('horizon', '?')} {config.get('stepName', 'step')}s ahead"
     if metrics.get("task") == "number":
         return f"predicts the number in “{_config(job).get('target') or 'the chosen column'}”"
     target = _config(job).get("target")
@@ -138,7 +144,12 @@ def card(job_id: str) -> dict:
     if meta and meta.get("description"):
         data.append(f"About the data: {meta['description']}")
     data.append(f"Licence: {meta.get('licence') or 'not given'}" if meta else "Licence: unknown")
-    if job.task == "table":
+    if job.task == "forecast":
+        data.append(f"Readings: {metrics.get('readings', 0):,}, one every {_config(job).get('stepName', 'step')}. The newest fifth were "
+                    "held back to check it.")
+        if metrics.get("filled"):
+            data.append(f"{metrics['filled']:,} missing readings were filled in from the readings either side.")
+    elif job.task == "table":
         data.append(f"Rows: {job.trainCount:,} to learn from and {job.checkCount:,} held back")
         features = [item["name"] for item in _config(job).get("features", [])]
         if features:
@@ -154,15 +165,35 @@ def card(job_id: str) -> dict:
         data.append("Some of this data came from open datasets. Their credits are in DATA_SOURCES.md, in the download.")
     sections.append({"title": "Training data", "lines": data})
 
-    sections.append({"title": "How it was checked", "lines": [
-        f"{job.checkCount:,} {things} were held back from training and used only to check the model.",
-        f"They are picked by a fingerprint of each {THING.get(job.task, 'example')}, so other models trained on this dataset were checked on mostly "
-        "the same ones. That makes comparing models on the Models tab fair.",
-    ]})
+    if job.task == "forecast":
+        sections.append({"title": "How it was checked", "lines": [
+            "The most recent readings were held back and never learned from. From "
+            f"{metrics.get('origins', 0)} points in that stretch, it forecast {metrics.get('horizon', '?')} steps ahead using only "
+            "the readings before each point, and those guesses were compared with what really happened.",
+            "It was also compared with two simple guesses: the same as last time, and the same as this time last season.",
+        ]})
+    else:
+        sections.append({"title": "How it was checked", "lines": [
+            f"{job.checkCount:,} {things} were held back from training and used only to check the model.",
+            f"They are picked by a fingerprint of each {THING.get(job.task, 'example')}, so other models trained on this dataset were checked on "
+            "mostly the same ones. That makes comparing models on the Models tab fair.",
+        ]})
 
     results = []
     review = job.review or {}
-    if predicts_number:
+    if job.task == "forecast":
+        simple = {"last": metrics.get("maeLast"), "season": metrics.get("maeSeason")}
+        results.append(f"Average error: {metrics['mae']:,.4g}, where a typical reading is {metrics['typical']:,.4g}")
+        results.append(f"The same as last time would be off by {simple['last']:,.4g} on average"
+                       + (f", and the same as last season by {simple['season']:,.4g}" if simple["season"] is not None else ""))
+        results.append(f"The likely range held the real reading {_percent(metrics['inside'])} of the time (it aims for 80%)")
+        if metrics["method"] != "model":
+            results.append("Forecasts use the simple guess, which did better than the network")
+        if metrics["horizon"] > 1 and metrics.get("maePerStep"):
+            caveats.append(f"Forecasts get less sure further ahead: off by {metrics['maePerStep'][0]:,.4g} one step ahead and "
+                           f"{metrics['maePerStep'][-1]:,.4g} at {metrics['horizon']} steps.")
+        caveats.append("It only knows this one column's past. Anything else that changes it, like holidays or prices, isn't seen.")
+    elif predicts_number:
         results.append(f"Average error: {metrics['mae']:,.4g}, against {metrics['baselineMae']:,.4g} from always guessing the average")
         results.append(f"R²: {metrics['r2']:.2f} (1 is perfect, 0 is no better than guessing the average)")
         if metrics["r2"] < 0.3:

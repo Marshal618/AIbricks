@@ -23,6 +23,7 @@ models, fetched once the first time a feature needs them.
 | Recognise sounds | A clap, a doorbell, a dog barking | **Sound** |
 | Sort text | Support emails into Billing, Bugs and Other | **Text** |
 | Predict a number or category from a table | House prices, whether a customer leaves | **Spreadsheet (CSV)** |
+| Forecast the next readings of a column | Next week's sales, tomorrow's energy use | **Spreadsheet (CSV)**, then **Forecast** on Train |
 
 Every model gets an honest score on examples it never learned from, shows the mistakes it made,
 and can be tried straight away on new examples, including live from your webcam or microphone.
@@ -275,7 +276,29 @@ Columns likely to make a score misleading are left out by default, with the reas
 numbers, IDs, free text, dates and columns that nearly give away the answer. You can turn most of
 them back on. Exact repeated rows are removed before the split, so the same row can't appear on both
 sides of it. Check any very high score yourself, as these checks can't catch everything. If your rows
-are ordered in time, a random hold-back can make a forecast look better than it will be.
+are ordered in time, a random hold-back can make a forecast look better than it will be, so use
+**Forecast** instead.
+
+### Forecast from a spreadsheet
+
+On **Train**, choose **Forecast a column's next readings from its past**, then the column of numbers,
+the column saying when each reading was taken, and how far ahead to forecast. It works out the time
+step (minutes to years) and any repeating pattern, such as busier weekends. Rows at the same time can
+be averaged or added up, and a few missing readings are filled in from the ones either side. With no
+date column, each row is one step, in file order.
+
+A small PyTorch network learns from windows of past readings, so it needs a few hundred readings to
+be useful. The newest fifth of the readings is held back and never learned from. Afterwards, the
+model forecasts across that stretch from many starting points, using only the readings before each
+one, and is compared with two simple guesses: the same as last time, and the same as last season. If
+a simple guess did better on the readings just before the check, forecasts use that guess, and the
+results say so. A shaded likely range shows how far off it has been, aiming to hold the real reading
+8 times in 10. **How it did recently** shows what it would have forecast for the last few readings,
+next to what happened.
+
+It only knows the one column's past, so anything else that moves it, such as holidays or prices, isn't
+seen. Forecasting models can be downloaded as a Python project, but don't become web apps or Raspberry
+Pi kits.
 
 ### Design your own in the Model builder
 
@@ -423,7 +446,7 @@ pretrained models into `backend/.test-cache/`.
 - Kinds of model: `finder.py` finds things in photos; `outline.py` outlines things, with MobileSAM
   for click to outline; `anomaly.py` spots what's unusual; `poses.py`
   sorts poses and hand signs; `sounds.py` sorts sounds; `textmodels.py` sorts text; `tables.py`
-  predicts from spreadsheets.
+  predicts from spreadsheets; `forecast.py` forecasts a column's next readings.
 - Understanding models: `explain.py` makes heatmaps and word weights; `slices.py` finds where a model
   fails; `compare.py` compares models; `cards.py` writes model cards.
 - `webapp.py` turns models into web apps, `pi.py` into Raspberry Pi kits, and `system.py` reports the training device and storage.

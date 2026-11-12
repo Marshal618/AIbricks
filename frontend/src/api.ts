@@ -1,4 +1,4 @@
-import type { PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -378,6 +378,23 @@ export async function trainTableModel(id: string, target: string, task: "categor
 export const fetchTableSchema = (job: string): Promise<TableSchema> => getJson(`/api/models/${job}/schema`);
 
 export const tryTableModel = (job: string, values: Record<string, string>): Promise<{ value?: number; answers?: PredictAnswer[] }> => sendJson(`/api/models/${job}/try-row`, { values });
+
+export function fetchForecastAnalysis(id: string, choice: { when?: string; value?: string; horizon?: number; combine?: "mean" | "sum" } = {}): Promise<ForecastAnalysis> {
+  const query = new URLSearchParams();
+  if (choice.when !== undefined) query.set("when", choice.when);
+  if (choice.value) query.set("value", choice.value);
+  if (choice.horizon) query.set("horizon", String(choice.horizon));
+  if (choice.combine) query.set("combine", choice.combine);
+  return getJson(`/api/datasets/${id}/forecast/analysis?${query}`);
+}
+
+export async function trainForecastModel(id: string, choice: { when: string; value: string; horizon: number; combine: "mean" | "sum" }): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-forecast`, choice);
+}
+
+export const fetchForecast = (job: string): Promise<ForecastDetails> => getJson(`/api/models/${job}/forecast`);
+
+export const forecastFrom = (job: string, values: number[]): Promise<{ values: number[]; low: number[]; high: number[] }> => sendJson(`/api/models/${job}/forecast-from`, { values });
 
 export const fetchHealth = (id: string): Promise<DataHealth> => getJson(`/api/datasets/${id}/health`);
 

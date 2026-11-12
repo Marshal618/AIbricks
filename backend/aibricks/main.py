@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose", "outline"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -985,6 +985,48 @@ def table_model_schema(job_id: str) -> dict:
 @app.post("/api/models/{job_id}/try-row")
 def try_table_model(job_id: str, request: RowToTry) -> dict:
     return _dataset_reply(tables.try_row, job_id, request.values)
+
+
+# ------------------------------------------------------------------- forecasting
+
+class ForecastTraining(BaseModel):
+    when: str = Field(max_length=500)
+    value: str = Field(min_length=1, max_length=500)
+    horizon: int = Field(ge=1, le=forecast.MAX_HORIZON)
+    combine: Literal["mean", "sum"] = "mean"
+
+
+class ForecastFrom(BaseModel):
+    values: list[float] = Field(min_length=1, max_length=forecast.MAX_VALUES_SENT)
+
+
+@app.get("/api/datasets/{dataset_id}/forecast/analysis")
+def analyse_forecast(
+    dataset_id: str,
+    when: str | None = Query(default=None, max_length=500),
+    value: str | None = Query(default=None, max_length=500),
+    horizon: int | None = Query(default=None, ge=1, le=forecast.MAX_HORIZON),
+    combine: Literal["mean", "sum"] | None = None,
+) -> dict:
+    return _dataset_reply(forecast.analyse, dataset_id, when, value, horizon, combine)
+
+
+@app.post("/api/datasets/{dataset_id}/train-forecast")
+def train_forecast_model(dataset_id: str, request: ForecastTraining) -> dict:
+    try:
+        return {"job": training.public(forecast.start(dataset_id, request.when, request.value, request.horizon, request.combine))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/forecast")
+def forecast_details(job_id: str) -> dict:
+    return _dataset_reply(forecast.details, job_id)
+
+
+@app.post("/api/models/{job_id}/forecast-from")
+def forecast_from_values(job_id: str, request: ForecastFrom) -> dict:
+    return _dataset_reply(forecast.forecast_from, job_id, request.values)
 
 
 # ------------------------------------------------------------------- data health

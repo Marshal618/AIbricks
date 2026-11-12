@@ -547,6 +547,13 @@ def _review_table(job: Job) -> None:
         }
 
 
+def _review_forecast(job: Job) -> None:
+    """Keeps train.py's scores, which hold no readings, and each checked guess under its time only."""
+    job.metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
+    held = json.loads((_folder(job) / "data" / "held_out.json").read_text(encoding="utf-8"))
+    _save_held_out(job, "forecast", [tuple(row) for row in held])
+
+
 def _summarise_review(job: Job, rows: list[dict]) -> None:
     categories: dict[str, dict[str, int]] = {name: {"correct": 0, "total": 0} for name in job.categories}
     for row in rows:
@@ -584,7 +591,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose, "outline": _review_outline}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose, "outline": _review_outline, "forecast": _review_forecast}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -694,7 +701,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose", "outline"):
+    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
