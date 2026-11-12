@@ -11,18 +11,18 @@ export const FIND_SUGGESTED = 30;
 const UPLOAD_WORKERS = 4;
 const STRIP_LIMIT = 80;
 // Distinct colours for each thing. Every box also carries its thing's name, so colour is never the only clue.
-const COLOURS = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#c2255c", "#0c8599", "#f08c00", "#5c7cfa", "#66a80f"];
+export const COLOURS = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#c2255c", "#0c8599", "#f08c00", "#5c7cfa", "#66a80f"];
 
 function message(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function colourOf(categories: string[], name: string) {
+export function colourOf(categories: string[], name: string) {
   const index = categories.indexOf(name);
   return COLOURS[(index < 0 ? 0 : index) % COLOURS.length];
 }
 
-function plural(count: number, one: string, many = `${one}s`) {
+export function plural(count: number, one: string, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
 }
 
@@ -66,6 +66,99 @@ export function BoxLayer({ boxes, categories, selected = null, onSelect, onRemov
 
 // ----------------------------------------------------------------- adding photos and drawing boxes
 
+/** Adds photos to a dataset whose photos get boxes or outlines: files, a folder, or the webcam. */
+export function ShapePhotoAdder({ datasetId, beginner, onAdded, onProblem, title = "Photos to draw boxes on", shapes = "boxes", verb = "find" }: {
+  datasetId: string; beginner: boolean; onAdded: () => Promise<void>; onProblem: (text: string) => void; title?: string; shapes?: string; verb?: string;
+}) {
+  const [upload, setUpload] = useState<{ done: number; total: number; added: number; rejected: string[] } | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [taken, setTaken] = useState(0);
+  const camera = useCamera(cameraOpen);
+  const filesInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+
+  const addFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []).filter((file) => !file.name.startsWith("."));
+    event.target.value = "";
+    if (!files.length) return;
+    const state = { done: 0, total: files.length, added: 0, rejected: [] as string[] };
+    setUpload({ ...state });
+    const list = [...files];
+    const worker = async () => {
+      for (let file = list.shift(); file; file = list.shift()) {
+        try {
+          if (!(await api.addUnsortedImage(file, datasetId)).duplicate) state.added += 1;
+        } catch (error) {
+          state.rejected.push(`${file.name}: ${message(error, "could not be read.")}`);
+        }
+        state.done += 1;
+        setUpload({ ...state });
+      }
+    };
+    await Promise.all(Array.from({ length: UPLOAD_WORKERS }, worker));
+    await onAdded();
+  };
+
+  const snap = async () => {
+    const video = camera.video.current;
+    if (!video || !camera.ready) return;
+    const file = await grab(video);
+    if (!file) return;
+    try {
+      if (!(await api.addUnsortedImage(file, datasetId)).duplicate) setTaken((count) => count + 1);
+      await onAdded();
+    } catch (error) {
+      onProblem(message(error, "The photo couldn't be saved."));
+    }
+  };
+
+  const uploading = upload !== null && upload.done < upload.total;
+  return (
+    <>
+      <h2 className="section-title">Add photos</h2>
+      <section className="card">
+        <div className="card-head">
+          <h2>{title}</h2>
+          <div className="label-buttons">
+            <button className="button button-small" aria-pressed={cameraOpen} onClick={() => setCameraOpen(!cameraOpen)}>{cameraOpen ? "Turn camera off" : "Use the webcam"}</button>
+            <button className="button button-small" disabled={uploading} onClick={() => folderInput.current?.click()}>Choose a folder</button>
+            <button className="button button-small" disabled={uploading} onClick={() => filesInput.current?.click()}>Add images</button>
+          </div>
+          <input ref={filesInput} className="visually-hidden" type="file" multiple accept="image/jpeg,image/png,image/bmp,image/webp" aria-label="Add photos" tabIndex={-1} onChange={(event) => void addFiles(event)} />
+          <input ref={folderInput} className="visually-hidden" type="file" aria-label="Choose a folder of photos" tabIndex={-1} onChange={(event) => void addFiles(event)} {...{ webkitdirectory: "" }} />
+        </div>
+        <p className="muted small">
+          {beginner
+            ? "Take photos the way the model will see things later: different places, light, distances, and some with several things in. Include a few with nothing in them."
+            : `Photos are copied to this computer only. Empty photos marked “Nothing here” teach it what not to ${verb}.`}
+        </p>
+        {cameraOpen && (
+          <div className="webcam-layout field-note">
+            <CameraView {...camera} />
+            <div className="webcam-side">
+              <button className="button button-primary" disabled={!camera.ready} onClick={() => void snap()}>Take photo</button>
+              <p className="muted small">{taken ? `${plural(taken, "photo")} taken. Move things around between photos.` : `Each photo joins the list below, ready for ${shapes}.`}</p>
+            </div>
+          </div>
+        )}
+        {upload && uploading && (
+          <div className="field-note" role="status">
+            <progress className="train-progress" max={upload.total} value={upload.done} aria-label="Photos copied" />
+            <p className="small muted">Checking and copying {upload.done} of {upload.total}…</p>
+          </div>
+        )}
+        {upload && !uploading && (
+          <p className="small muted field-note" role="status">
+            Added {plural(upload.added, "photo")}.{upload.rejected.length ? ` ${upload.rejected.length} couldn't be read: ${upload.rejected.slice(0, 3).join("; ")}` : ""}
+          </p>
+        )}
+      </section>
+
+    </>
+  );
+}
+
+
 export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetSummary; beginner: boolean; onChanged: () => void }) {
   const datasetId = dataset.id;
   const categories = dataset.categories;
@@ -77,15 +170,9 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
   const [selected, setSelected] = useState<number | null>(null);
   const [drawing, setDrawing] = useState<{ x: number; y: number; x2: number; y2: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [upload, setUpload] = useState<{ done: number; total: number; added: number; rejected: string[] } | null>(null);
   const [helper, setHelper] = useState<string | null>(null);
   const [helpOn, setHelpOn] = useState(true);
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [taken, setTaken] = useState(0);
-  const camera = useCamera(cameraOpen);
   const stage = useRef<HTMLDivElement>(null);
-  const filesInput = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (!categories.includes(thing)) setThing(categories[0] ?? ""); }, [categories, thing]);
 
@@ -217,88 +304,13 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
     return () => window.removeEventListener("keydown", onKey);
   }, [categories, selected, current, draft, save, removeBox]);
 
-  const addFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []).filter((file) => !file.name.startsWith("."));
-    event.target.value = "";
-    if (!files.length) return;
-    const state = { done: 0, total: files.length, added: 0, rejected: [] as string[] };
-    setUpload({ ...state });
-    const list = [...files];
-    const worker = async () => {
-      for (let file = list.shift(); file; file = list.shift()) {
-        try {
-          if (!(await api.addUnsortedImage(file, datasetId)).duplicate) state.added += 1;
-        } catch (error) {
-          state.rejected.push(`${file.name}: ${message(error, "could not be read.")}`);
-        }
-        state.done += 1;
-        setUpload({ ...state });
-      }
-    };
-    await Promise.all(Array.from({ length: UPLOAD_WORKERS }, worker));
-    await load(currentId);
-    onChanged();
-  };
-
-  const snap = async () => {
-    const video = camera.video.current;
-    if (!video || !camera.ready) return;
-    const file = await grab(video);
-    if (!file) return;
-    try {
-      if (!(await api.addUnsortedImage(file, datasetId)).duplicate) setTaken((count) => count + 1);
-      await load(currentId);
-      onChanged();
-    } catch (error) {
-      setProblem(message(error, "The photo couldn't be saved."));
-    }
-  };
-
-  const uploading = upload !== null && upload.done < upload.total;
   const shown = drawing && { x: Math.min(drawing.x, drawing.x2), y: Math.min(drawing.y, drawing.y2), w: Math.abs(drawing.x2 - drawing.x), h: Math.abs(drawing.y2 - drawing.y) };
   const strip = useMemo(() => (photos ?? []).slice(0, STRIP_LIMIT), [photos]);
 
   return (
     <>
       {problem && <div className="result result-fail" role="alert"><p>{problem}</p></div>}
-      <h2 className="section-title">Add photos</h2>
-      <section className="card">
-        <div className="card-head">
-          <h2>Photos to draw boxes on</h2>
-          <div className="label-buttons">
-            <button className="button button-small" aria-pressed={cameraOpen} onClick={() => setCameraOpen(!cameraOpen)}>{cameraOpen ? "Turn camera off" : "Use the webcam"}</button>
-            <button className="button button-small" disabled={uploading} onClick={() => folderInput.current?.click()}>Choose a folder</button>
-            <button className="button button-small" disabled={uploading} onClick={() => filesInput.current?.click()}>Add images</button>
-          </div>
-          <input ref={filesInput} className="visually-hidden" type="file" multiple accept="image/jpeg,image/png,image/bmp,image/webp" aria-label="Add photos" tabIndex={-1} onChange={(event) => void addFiles(event)} />
-          <input ref={folderInput} className="visually-hidden" type="file" aria-label="Choose a folder of photos" tabIndex={-1} onChange={(event) => void addFiles(event)} {...{ webkitdirectory: "" }} />
-        </div>
-        <p className="muted small">
-          {beginner
-            ? "Take photos the way the model will see things later: different places, light, distances, and some with several things in. Include a few with nothing in them."
-            : "Photos are copied to this computer only. Empty photos marked “Nothing here” teach it what not to find."}
-        </p>
-        {cameraOpen && (
-          <div className="webcam-layout field-note">
-            <CameraView {...camera} />
-            <div className="webcam-side">
-              <button className="button button-primary" disabled={!camera.ready} onClick={() => void snap()}>Take photo</button>
-              <p className="muted small">{taken ? `${plural(taken, "photo")} taken. Move things around between photos.` : "Each photo joins the list below, ready for boxes."}</p>
-            </div>
-          </div>
-        )}
-        {upload && uploading && (
-          <div className="field-note" role="status">
-            <progress className="train-progress" max={upload.total} value={upload.done} aria-label="Photos copied" />
-            <p className="small muted">Checking and copying {upload.done} of {upload.total}…</p>
-          </div>
-        )}
-        {upload && !uploading && (
-          <p className="small muted field-note" role="status">
-            Added {plural(upload.added, "photo")}.{upload.rejected.length ? ` ${upload.rejected.length} couldn't be read: ${upload.rejected.slice(0, 3).join("; ")}` : ""}
-          </p>
-        )}
-      </section>
+      <ShapePhotoAdder datasetId={datasetId} beginner={beginner} onAdded={async () => { await load(currentId); onChanged(); }} onProblem={setProblem} />
 
       <h2 className="section-title">Draw boxes</h2>
       <section className="card find-labeller">

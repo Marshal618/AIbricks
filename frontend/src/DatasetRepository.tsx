@@ -7,6 +7,7 @@ import { WhereItFails } from "./Slices";
 import { TrainingCheck } from "./TrainingCheck";
 import { UnusualLine, UnusualTrainer, UnusualTry } from "./Unusual";
 import { FindResults, FindTrainer, FindTry } from "./Find";
+import { OutlineResults, OutlineTrainer, OutlineTry } from "./OutlineThings";
 import { Why } from "./Ui";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { PoseResults, PoseTrainer, PoseTry } from "./Pose";
@@ -475,6 +476,17 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
     }
   };
 
+  const startOutline = async () => {
+    setProblem(null);
+    try {
+      await api.trainOutlineModel(dataset.id);
+      await load();
+      onChanged();
+    } catch (error) {
+      setProblem(message(error, "Training could not start."));
+    }
+  };
+
   const startPose = async () => {
     setProblem(null);
     try {
@@ -514,6 +526,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
   const newestUnusual = models?.find((model) => model.task === "anomaly" && model.status === "finished" && model.hasModel) ?? null;
   const newestFind = models?.find((model) => model.task === "detect" && model.status === "finished" && model.hasModel) ?? null;
   const newestPose = models?.find((model) => model.task === "pose" && model.status === "finished" && model.hasModel) ?? null;
+  const newestOutline = models?.find((model) => model.task === "outline" && model.status === "finished" && model.hasModel) ?? null;
 
   const remove = async (model: SavedModel) => {
     if (!window.confirm(`Delete this "${model.projectName}" model? Its record and trained file are removed. This can't be undone.`)) return;
@@ -533,6 +546,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       <h2 className="section-title">Train</h2>
       {dataset.goal === "unusual" && <UnusualTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startUnusual()} onStop={(id) => void stop(id)} />}
       {dataset.goal === "find" && <FindTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={(detector) => void startFind(detector)} onStop={(id) => void stop(id)} />}
+      {dataset.goal === "outline" && <OutlineTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startOutline()} onStop={(id) => void stop(id)} />}
       {dataset.goal === "pose" && <PoseTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startPose()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "image" && (dataset.goal ?? "sort") === "sort" && (
         <div className="train-choices">
@@ -547,9 +561,11 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && <TableTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
-      {(newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {(newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose || newestOutline) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
       {newestPose && <PoseTry key={newestPose.id} model={newestPose} kind={newestPose.metrics?.points ?? dataset.points ?? "body"} beginner={beginner} />}
       {newestPose && <PoseResults key={`r-${newestPose.id}`} model={newestPose} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
+      {newestOutline && <OutlineTry key={newestOutline.id} model={newestOutline} beginner={beginner} />}
+      {newestOutline && <OutlineResults key={`r-${newestOutline.id}`} model={newestOutline} datasetId={dataset.id} beginner={beginner} />}
       {newestFind && <FindTry key={newestFind.id} model={newestFind} beginner={beginner} />}
       {newestFind && <FindResults key={`r-${newestFind.id}`} model={newestFind} datasetId={dataset.id} beginner={beginner} />}
       {newestUnusual && <UnusualTry key={newestUnusual.id} model={newestUnusual} beginner={beginner} />}

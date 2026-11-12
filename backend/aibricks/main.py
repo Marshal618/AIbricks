@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose", "outline"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -250,7 +250,7 @@ async def predict_live(job_id: str, request: Request, explain: bool = False) -> 
         reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
     except training.TrainingError as error:
         raise _raise(error) from None
-    if "boxes" in reply or "points" in reply:
+    if "boxes" in reply or "points" in reply or "mask" in reply:
         return reply  # a detector's boxes and counts, or the body and hand points a pose model found
     return reply if explain else {"answers": reply["answers"]}
 
@@ -713,7 +713,7 @@ def move_unusual_line(job_id: str, request: UnusualLine) -> dict:
 
 
 class BoxesIn(BaseModel):
-    boxes: list[dict[str, str | float]] = Field(max_length=finder.MAX_BOXES)
+    boxes: list[dict[str, str | float | list[list[float]]]] = Field(max_length=finder.MAX_BOXES)
 
 
 class SureIn(BaseModel):
@@ -736,6 +736,39 @@ def save_boxes(dataset_id: str, image_id: str, request: BoxesIn) -> dict:
 def clear_boxes(dataset_id: str, image_id: str) -> dict:
     _dataset_reply(finder.clear_boxes, dataset_id, image_id)
     return {"ok": True}
+
+
+class ClicksIn(BaseModel):
+    clicks: list[dict[str, float | bool]] = Field(min_length=1, max_length=outline.MAX_CLICKS)
+
+
+@app.post("/api/datasets/{dataset_id}/outline/{image_id}", dependencies=[Depends(_needs_json)])
+def click_to_outline(dataset_id: str, image_id: str, request: ClicksIn) -> dict:
+    """The outline of the thing around the places clicked, found by MobileSAM on this computer."""
+    return _dataset_reply(outline.click, dataset_id, image_id, request.clicks)
+
+
+@app.post("/api/datasets/{dataset_id}/train-outline", dependencies=[Depends(_needs_json)])
+def train_outline(dataset_id: str) -> dict:
+    """Fine-tunes a pretrained outlining model on an “outline things” dataset's outlined photos."""
+    try:
+        return {"job": training.public(outline.start(dataset_id))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/outline")
+def outline_settings(job_id: str) -> dict:
+    return _dataset_reply(outline.details, job_id)
+
+
+@app.get("/api/models/{job_id}/outline-review/{number}")
+def outline_review_image(job_id: str, number: int) -> FileResponse:
+    try:
+        path = outline.review_image(job_id, number)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return FileResponse(path, media_type="image/png", headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/datasets/{dataset_id}/train-find", dependencies=[Depends(_needs_json)])

@@ -30,6 +30,11 @@ def is_find(meta: dict) -> bool:
     return meta.get("kind") == "image" and meta.get("goal") == "find"
 
 
+def has_shapes(meta: dict) -> bool:
+    """Datasets whose photos get shapes drawn on them: boxes to find things, or outlines (see outline.py)."""
+    return meta.get("kind") == "image" and meta.get("goal") in ("find", "outline")
+
+
 def _boxes_file(dataset: str) -> Path:
     return training.root(dataset) / "find" / "boxes.json"
 
@@ -87,10 +92,40 @@ def _clean(boxes: list[dict], categories: list[str]) -> list[dict]:
     return cleaned
 
 
+MAX_POINTS = 400
+
+
+def clean_outlines(shapes: list[dict], categories: list[str]) -> list[dict]:
+    """Outlines as lists of corners, each a share of the photo's width and height. Each keeps the box
+    around it too, so everything that counts or shows boxes works for outlines as well."""
+    if len(shapes) > MAX_BOXES:
+        raise TrainingError(422, f"A photo can have at most {MAX_BOXES} outlines.")
+    cleaned = []
+    for shape in shapes:
+        if shape.get("category") not in categories:
+            raise TrainingError(422, f'"{str(shape.get("category"))[:40]}" isn\'t one of the things this dataset outlines. Refresh the page.')
+        points = shape.get("points")
+        if not isinstance(points, list) or len(points) > MAX_POINTS:
+            raise TrainingError(422, f"An outline needs a list of at most {MAX_POINTS} corners.")
+        try:
+            corners = [(min(max(float(x), 0.0), 1.0), min(max(float(y), 0.0), 1.0)) for x, y in points]
+        except (TypeError, ValueError):
+            raise TrainingError(422, "An outline's corners must each be two numbers.") from None
+        if len(corners) < 3:
+            continue
+        xs, ys = [x for x, _ in corners], [y for _, y in corners]
+        area = abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(corners, corners[1:] + corners[:1]))) / 2
+        if area < 0.0001:
+            continue  # a slip of the mouse rather than a shape
+        cleaned.append({"category": shape["category"], "points": [[round(x, 5), round(y, 5)] for x, y in corners],
+                        "x": round(min(xs), 5), "y": round(min(ys), 5), "w": round(max(xs) - min(xs), 5), "h": round(max(ys) - min(ys), 5)})
+    return cleaned
+
+
 def listing(dataset: str) -> dict:
     meta = datasets._read(dataset)
-    if not is_find(meta):
-        raise TrainingError(422, "Boxes are for “find things in photos” datasets.")
+    if not has_shapes(meta):
+        raise TrainingError(422, "Boxes and outlines are for “find things” and “outline things” datasets.")
     boxes = read_boxes(dataset)
     names = photos(dataset)
     # Photos still to box come first, so the next one is always at the top.
@@ -101,14 +136,14 @@ def listing(dataset: str) -> dict:
 def save_boxes(dataset: str, image_id: str, boxes: list[dict]) -> dict:
     with training._lock:
         meta = datasets._read(dataset)
-        if not is_find(meta):
-            raise TrainingError(422, "Boxes are for “find things in photos” datasets.")
+        if not has_shapes(meta):
+            raise TrainingError(422, "Boxes and outlines are for “find things” and “outline things” datasets.")
         labelling.image_file(image_id, dataset)
         problem = datasets._busy(dataset)
         if problem:
             raise TrainingError(409, problem)
         saved = read_boxes(dataset)
-        saved[image_id] = _clean(boxes, meta["categories"])
+        saved[image_id] = (clean_outlines if meta["goal"] == "outline" else _clean)(boxes, meta["categories"])
         write_boxes(dataset, saved)
         return {"boxes": saved[image_id]}
 

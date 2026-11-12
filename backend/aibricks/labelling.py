@@ -153,8 +153,8 @@ def require_sorting(dataset: str) -> None:
     if dataset == training.DEFAULT_DATASET:
         return
     from . import datasets  # imported here because datasets imports this module
-    if datasets._read(dataset).get("goal") == "find":
-        raise TrainingError(422, "In a “find things” dataset, photos get boxes rather than a category.")
+    if datasets._read(dataset).get("goal") in ("find", "outline"):
+        raise TrainingError(422, "In this dataset, photos get boxes or outlines rather than a category.")
 
 
 def _require_category(dataset: str, category: str) -> None:
@@ -163,8 +163,8 @@ def _require_category(dataset: str, category: str) -> None:
         return
     from . import datasets  # imported here because datasets imports this module
     meta = datasets._read(dataset)
-    if meta.get("goal") == "find":
-        raise TrainingError(422, "In a “find things” dataset, photos get boxes rather than a category.")
+    if meta.get("goal") in ("find", "outline"):
+        raise TrainingError(422, "In this dataset, photos get boxes or outlines rather than a category.")
     if category not in meta["categories"]:
         raise TrainingError(422, f'"{category[:40]}" isn\'t one of this dataset\'s categories. Refresh the page to see the current ones.')
 

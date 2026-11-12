@@ -28,13 +28,15 @@ METHODS = {
                "ResNet-18 are kept as a memory, and a photo is unusual when its least normal patch is far from all of them.",
     "detect": "A Faster R-CNN detector (Ren et al., 2015) with a MobileNetV3 backbone, pretrained on COCO by torchvision, "
               "with its last layer replaced and the whole detector fine-tuned on boxed photos.",
+    "outline": "LRASPP (Howard et al., 2019) with a MobileNetV3 backbone, pretrained by torchvision, with its last layers "
+               "replaced and the whole model fine-tuned on outlined photos. Outlines were drawn with help from MobileSAM.",
     "pose": "MediaPipe's pose or hand landmarker (Google, Apache 2.0) finds body or hand points, and a small fully "
             "connected network trained on those points, measured from the body or wrist, names the category.",
     "sound": "A frozen pretrained Audio Spectrogram Transformer (MIT/ast-finetuned-audioset-10-10-0.4593) reading 1-second "
              "spectrograms, with a linear classifier trained on each clip and two time-shifted, louder or quieter copies.",
 }
-THINGS = {"pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
-THING = {"pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
+THINGS = {"outline": "photos", "pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
+THING = {"outline": "photo", "pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
 def _method(job) -> str:

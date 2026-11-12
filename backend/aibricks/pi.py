@@ -37,7 +37,7 @@ from PIL import Image, ImageOps
 
 HERE = Path(__file__).resolve().parent
 S = json.loads((HERE / "settings.json").read_text(encoding="utf-8"))
-KIND = S.get("kind", "image")  # "image", "pose" or "detect"
+KIND = S.get("kind", "image")  # "image", "pose", "detect" or "outline"
 LABELS = S["labels"]
 SEEN, HAND_POINTS = 0.5, 21
 
@@ -56,12 +56,21 @@ class Model:
         if KIND == "detect":
             boxes, scores, labels = self.session.run(None, {"image": values})
             return boxes, scores, labels
+        if KIND == "outline":
+            return self.session.run(None, {"image": values})[0][0]
         name = "features" if KIND == "pose" else "image"
         return self.session.run(None, {name: values})[0][0]
 
     # ------------------------------------------------------------ a photo in, answers out
     def answer(self, image, sure):
-        """A list of (name, chance, count), surest first. Empty when nothing is there."""
+        """A list of (name, chance, count), surest first. Empty when nothing is there. For an outlining
+        model the chance is how much of the photo each thing covers."""
+        if KIND == "outline":
+            side = S["size"]
+            pixels = np.asarray(image.resize((side, side), Image.BILINEAR), dtype=np.float32) / 255
+            labels = self.run(np.ascontiguousarray(pixels.transpose(2, 0, 1))[None]).argmax(0)
+            shares = [(name, float((labels == i + 1).mean()), 1) for i, name in enumerate(LABELS)]
+            return sorted((row for row in shares if row[1] >= 0.005), key=lambda row: -row[1])
         if KIND == "detect":
             side = S["size"]
             pixels = np.asarray(image.resize((side, side), Image.BILINEAR), dtype=np.float32) / 255
@@ -165,6 +174,11 @@ class PointFinder:
 # ---------------------------------------------------------------- the self-check
 def check(model):
     """The largest gap between the answers here and the ones PyTorch gave when the kit was made."""
+    if KIND == "outline":
+        side = S["size"]
+        pattern = np.array([math.sin(i * 0.37) * 0.5 + 0.5 for i in range(3 * side * side)], dtype=np.float32).reshape(1, 3, side, side)
+        got = model.run(pattern).reshape(-1)[::S["check"]["step"]]
+        return max(abs(a - b) / max(1.0, abs(a)) for a, b in zip(S["check"]["values"], got.tolist()))
     if KIND == "detect":
         side = S["size"]
         pattern = np.array([math.sin(i * 0.37) * 0.5 + 0.5 for i in range(3 * side * side)], dtype=np.float32).reshape(3, side, side)
@@ -264,16 +278,25 @@ class Rule:
         return None
 
 
+def _rounded(answers):
+    """An outlining model's shares to the nearest 5%, so it reports changes without printing every photo."""
+    return [(name, round(share * 20)) for name, share, _ in answers]
+
+
 def describe(answers):
     if not answers:
         return S.get("nothing") or "Nothing found."
     if KIND == "detect":
         return ", ".join(f"{name} × {count}" for name, _, count in answers)
+    if KIND == "outline":
+        return ", ".join(f"{name} {round(share * 100)}%" for name, share, _ in answers)
     name, chance, _ = answers[0]
     return f"{name} {round(chance * 100)}%"
 
 
 def is_seen(answers, when, sure):
+    if KIND == "outline":
+        return any(name == when and share >= sure for name, share, _ in answers)
     if KIND == "detect":
         return any(name == when for name, _, _ in answers)
     return bool(answers) and answers[0][0] == when and answers[0][1] >= sure
@@ -287,7 +310,8 @@ def main():
     parser.add_argument("--pin", type=int, help="GPIO pin to switch on while it's seen (BCM number, like 17)")
     parser.add_argument("--command", help="a command to run each time it starts being seen")
     parser.add_argument("--wait", type=float, default=5, help="seconds before the command can run again (default 5)")
-    parser.add_argument("--sure", type=float, default=S.get("sure", 0.7), help="how sure it must be, from 0 to 1")
+    parser.add_argument("--sure", type=float, default=S.get("sure", 0.7),
+                        help="how much of the view it must cover, from 0 to 1" if KIND == "outline" else "how sure it must be, from 0 to 1")
     parser.add_argument("--usb", action="store_true", help="use a USB webcam even if there's a Raspberry Pi camera")
     parser.add_argument("--camera", type=int, default=0, help="which USB webcam, when there are several (default 0)")
     parser.add_argument("--json", action="store_true", help="print each answer as a line of JSON, for other programs")
@@ -322,7 +346,7 @@ def main():
     rule = Rule(args.when, args.pin, args.command, args.wait) if args.when else None
     camera = Camera(args.usb, args.camera)
     print(f"Watching. {S.get('about', '')} Press Ctrl+C to stop.", flush=True)
-    last = None
+    last, last_answers = None, []
     try:
         while True:
             image = camera.photo()
@@ -331,9 +355,10 @@ def main():
                 continue
             answers = model.answer(image, args.sure)
             text = describe(answers)
-            if args.json or text.split(" ")[0] != (last or "").split(" ")[0] or KIND == "detect" and text != last:
+            if args.json or text.split(" ")[0] != (last or "").split(" ")[0] or KIND == "detect" and text != last \
+                    or KIND == "outline" and _rounded(answers) != _rounded(last_answers):
                 report(answers)
-                last = text
+                last, last_answers = text, answers
             if rule:
                 change = rule.update(is_seen(answers, args.when, args.sure))
                 if change:
@@ -434,9 +459,12 @@ def kit(job_id: str) -> tuple[bytes, str]:
     job = webapp._job(job_id, where="a Raspberry Pi", made="a Raspberry Pi kit")
     info = webapp._export(job)
     folder = training._folder(job)
-    detect, pose = job.task == "detect", job.task == "pose"
+    detect, pose, outlining = job.task == "detect", job.task == "pose", job.task == "outline"
     labels = info["labels"]
-    if detect:
+    if outlining:
+        about, nothing = f"Outlines {', '.join(labels)}, and says how much of the view each one covers.", "Nothing outlined."
+        example, sure = labels[0], 0.2
+    elif detect:
         about, nothing = f"Finds and counts: {', '.join(labels)}.", "Nothing found."
         example, sure = labels[0], webapp._detect_settings(job).get("sure", 0.5)
     elif pose:
@@ -450,11 +478,14 @@ def kit(job_id: str) -> tuple[bytes, str]:
     name = f"{slug}-pi"
     quoted = f'"{example}"' if any(c in example for c in " '\"$`\\") else example
     rule = f"--when {quoted} --pin 17"
-    rules = (f"To switch on GPIO pin 17 while it {'finds' if detect else 'sees'} {example}, or play a sound each time it starts:\n\n"
+    rules = (f"To switch on GPIO pin 17 while {example} covers a fifth of the view, or play a sound each time it starts:\n\n" if outlining else
+             f"To switch on GPIO pin 17 while it {'finds' if detect else 'sees'} {example}, or play a sound each time it starts:\n\n")
+    rules += (
              f"```\n.venv/bin/python run.py {rule}\n"
              f".venv/bin/python run.py --when {quoted} --command \"aplay /usr/share/sounds/alsa/Front_Center.wav\"\n```\n\n"
              f"`--when` takes one of: {', '.join(labels)}. "
-             + (f"Add `--sure 0.8` to need more certainty (it uses {sure:g} now)." if detect else "Add `--sure 0.9` to need more certainty (it uses 0.7 now)."))
+             + ("Add `--sure 0.5` to need it to cover half the view (it uses 0.2 now)." if outlining
+                else f"Add `--sure 0.8` to need more certainty (it uses {sure:g} now)." if detect else "Add `--sure 0.9` to need more certainty (it uses 0.7 now)."))
     readme = (_README
               .replace("__NAME__", job.projectName)
               .replace("__ABOUT__", about)

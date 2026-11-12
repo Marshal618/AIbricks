@@ -83,7 +83,7 @@ def test_only_finished_photo_models_become_apps(trained, monkeypatch):
     monkeypatch.setattr(job, "task", "text")
     monkeypatch.setattr(training, "stored", lambda job_id: job)
     reply = client.get(f"/api/train/{trained}/app")
-    assert reply.status_code == 422 and "photo model" in reply.json()["detail"]["message"]
+    assert reply.status_code == 422 and "photo, pose, outlining" in reply.json()["detail"]["message"]
 
 
 def test_names_cant_break_out_of_the_page(trained):

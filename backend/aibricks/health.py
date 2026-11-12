@@ -114,7 +114,7 @@ def overview(dataset: str) -> dict:
         for label in labels:
             counts[label] += 1
     labelled = len(current)
-    if meta.get("goal") == "find":
+    if meta.get("goal") in ("find", "outline"):
         from . import finder
         counts, labelled, _ = finder.counts(meta)
     result = _read(_folder(dataset) / "result.json", None)
@@ -169,6 +169,15 @@ def overview(dataset: str) -> dict:
 
 
 def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, open_pairs) -> tuple[int, list[str]]:
+    if meta.get("goal") == "outline":
+        from . import outline  # Imported here, because outline imports datasets, which imports this module.
+        problems = outline.readiness(meta)
+        if problems:
+            return 0, problems
+        short = [name for name, amount in counts.items() if amount < outline.SUGGESTED_OUTLINES]
+        if short:
+            return 1, [f"Outline each thing until it has {outline.SUGGESTED_OUTLINES}, in the different places and light it will see. Short: {', '.join(short)}."]
+        return 2, ["The label check sorts photos into categories, so it doesn't apply to outlining things yet."]
     if meta.get("goal") == "find":
         from . import finder  # Imported here, because finder imports datasets, which imports this module.
         problems = finder.readiness(meta)
@@ -225,7 +234,7 @@ def _level(meta, counts, labelled, conflicts, result, unchecked, open_issues, op
 def start(dataset: str) -> dict:
     global _job
     meta = datasets._read(dataset)
-    if meta["kind"] in ("table", "sound") or meta.get("goal") in ("unusual", "find", "pose"):
+    if meta["kind"] in ("table", "sound") or meta.get("goal") in ("unusual", "find", "pose", "outline"):
         raise TrainingError(422, "The label check is for photo and text datasets that sort into categories.")
     with _lock, training._lock:
         if is_checking():

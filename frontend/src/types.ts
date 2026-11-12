@@ -95,8 +95,8 @@ export interface DatasetSummary {
   rows?: number;
   columns?: string[];
   /** Photos only: "unusual" learns what normal looks like and spots what isn't; "find" draws boxes around things;
-   * "pose" sorts the body poses or hand signs in photos. */
-  goal?: "sort" | "unusual" | "find" | "pose";
+   * "pose" sorts the body poses or hand signs in photos; "outline" marks the exact shape of things. */
+  goal?: "sort" | "unusual" | "find" | "pose" | "outline";
   /** Sorting poses only: the points of a whole body, or of hands. */
   points?: "body" | "hands";
 }
@@ -124,7 +124,7 @@ export interface TableAnalysis {
 }
 
 export interface TableMetrics {
-  task: "category" | "number" | "unusual" | "detect" | "pose";
+  task: "category" | "number" | "unusual" | "detect" | "pose" | "outline";
   /** Sorting poses: photos where no body or hands could be seen, which it couldn't learn from or answer. */
   points?: "body" | "hands";
   nothingFoundTraining?: number;
@@ -138,6 +138,10 @@ export interface TableMetrics {
   map50?: number | null;
   perCategory?: Record<string, { found: number; missed: number; falseAlarms: number }>;
   photosChecked?: CheckedPhoto[];
+  /** Outlining things: how closely its outlines match yours (intersection over union), on held-back photos. */
+  meanIoU?: number | null;
+  pixelAccuracy?: number;
+  good?: number;
   repeatedRows: number;
   warnings: string[];
   importance: { name: string; share: number }[];
@@ -221,7 +225,7 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number; categories?: Record<string, { correct: number; total: number }> } | null;
-  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose";
+  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose" | "outline";
   metrics: TableMetrics | null;
   totalEpochs?: number;
   trainCount?: number;
@@ -619,13 +623,14 @@ export interface FailureSearch {
   error?: string;
 }
 
-/** A box around one thing, as shares of the photo's width and height. */
+/** A box around one thing, as shares of the photo's width and height. Outlines also carry their corners. */
 export interface Box {
   category: string;
   x: number;
   y: number;
   w: number;
   h: number;
+  points?: [number, number][];
   /** How sure the model is, on boxes the model drew. */
   chance?: number;
 }
@@ -648,6 +653,34 @@ export interface CheckedPhoto {
   right: number;
   missed: number;
   falseAlarms: number;
+}
+
+/** What an outlining model saw: how much of the photo each thing covers, and its outlines as a see-through PNG. */
+export interface FoundOutlines {
+  areas: Record<string, number>;
+  mask: string;
+}
+
+/** One held-back photo: your outlines, how closely the model matched each thing, and the number of its picture. */
+export interface OutlinedPhoto {
+  file: string;
+  score: number;
+  ious: Record<string, number>;
+  missed: string[];
+  extra: string[];
+  real: Box[];
+  mask: number;
+}
+
+export interface OutlineMetrics {
+  task: "outline";
+  photos: number;
+  good: number;
+  meanIoU: number | null;
+  pixelAccuracy: number;
+  allRight: number;
+  perCategory: Record<string, { iou: number | null; photos: number; good: number }>;
+  photosChecked: OutlinedPhoto[];
 }
 
 /** What a pose model saw in one photo: the points it found, as 0-1 shares of the photo, and its answers. */

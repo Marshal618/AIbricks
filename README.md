@@ -17,6 +17,7 @@ models, fetched once the first time a feature needs them.
 |---|---|---|
 | Sort photos into categories | Ripe or unripe fruit, cat or dog | **Images**, then **Sort photos into categories** |
 | Find and count things in photos | Count the screws on a tray | **Images**, then **Find and count things in photos** |
+| Outline things to measure their shape and size | How much of a leaf is diseased, the area of a stain | **Images**, then **Outline things in photos** |
 | Spot when something looks wrong | Scratches on a part, a blocked drain | **Images**, then **Spot what's unusual** |
 | Recognise body poses or hand signs | Exercise form, thumbs up, a peace sign | **Images**, then **Sort body poses or hand signs** |
 | Recognise sounds | A clap, a doorbell, a dog barking | **Sound** |
@@ -25,7 +26,7 @@ models, fetched once the first time a feature needs them.
 
 Every model gets an honest score on examples it never learned from, shows the mistakes it made,
 and can be tried straight away on new examples, including live from your webcam or microphone.
-Photo, pose and fast find-things models also become web apps and Raspberry Pi kits.
+Photo, pose, outlining and fast find-things models also become web apps and Raspberry Pi kits.
 
 ## Get started
 
@@ -184,6 +185,26 @@ found and missed on held-back photos, its false alarms and the standard mAP@50 s
 it got wrong shown with your boxes and its own. **Try it** draws live boxes and counts on the webcam,
 and a slider sets how sure it must be before it draws a box. Versions keep the boxes.
 
+### Outline things in photos
+
+This marks the exact shape of each thing rather than a box around it, so you can measure how much of
+a photo it covers: the diseased part of a leaf, a stain, a crack, the sky.
+
+Name the things to outline, add photos, then on **Add data** click on each thing: its outline appears.
+Click more parts to add them, or Shift-click (or right-click) a part to leave it out, then press
+Enter to keep it. Enter again saves the photo. **Draw by hand** lets you click the corners yourself.
+Clicking uses MobileSAM (Zhang et al., 2023, Apache 2.0), a small version of Meta's Segment
+Anything, running on this computer with ONNX Runtime. The first click downloads it once, about
+45 MB, checked against fixed hashes. The first click on each photo takes under a second; later
+clicks are quick.
+
+The model is LRASPP (Howard et al., 2019) with a MobileNetV3 backbone, pretrained by torchvision and
+fine-tuned on your outlines (13 MB to download, 3.2 million parameters). Training needs 10 done
+photos and 5 outlines of each thing; aim for 30. The results show how closely its outlines match
+yours on held-back photos (intersection over union), with the worst photos shown with your outline
+and its own. **Try it** colours what it outlines, live on the webcam too, and says how much of the
+view each thing covers. Versions keep the outlines.
+
 ### Spot what's unusual
 
 This learns from normal photos only, so you don't need examples of every possible problem. There
@@ -309,7 +330,7 @@ file and opened on another computer. Files contain the design only, not data or 
 
 ### As a web app
 
-**Open as an app** and **Download app** appear under the newest photo model, pose model or fast
+**Open as an app** and **Download app** appear under the newest photo model, pose model, outlining model or fast
 find-things model. They make a single web page that runs the model by itself in any browser, with
 the camera or a chosen photo. Nothing is uploaded.
 
@@ -327,12 +348,14 @@ Phones only allow the camera on `https://` pages, so to use an app on a phone, p
 website, such as GitHub Pages. Models over 120 MB, like the vision transformer, are too big for a
 page. A find-things page draws boxes and counts each thing, and its rules fire when any box of a thing
 is sure enough. Accurate find-things models are too big for a page, so train with **Fast** to make one.
+An outlining page colours what it outlines and shows how much of the view each thing covers; its
+rules fire when a thing covers at least a chosen share of the view.
 Text, sound and unusual-photo models can't become apps yet.
 
 ### On a Raspberry Pi
 
 **Raspberry Pi kit**, next to **Download app**, gives a zip that runs the same model on a Raspberry
-Pi's camera, with no internet and no AI Bricks. It works for photo models, pose models and fast
+Pi's camera, with no internet and no AI Bricks. It works for photo, pose, outlining and fast
 find-things models. Copy the folder to a Pi running 64-bit Raspberry Pi OS, then:
 
 ```bash
@@ -344,7 +367,8 @@ sh setup.sh                                  # installs what it needs and checks
 
 A pin can drive an LED directly, or a relay or transistor board for anything bigger. It switches on
 after two photos in a row agree and off after three that don't, so one odd guess doesn't make it
-flicker. `--photo` checks photos instead of the camera, `--json` prints answers for another program,
+flicker. For an outlining model, `--sure` is how much of the view the thing must cover (0.2 to
+start). `--photo` checks photos instead of the camera, `--json` prints answers for another program,
 and `--usb` uses a USB webcam, which also works on any other computer.
 
 The kit holds the same ONNX model as the web app, run by ONNX Runtime, so the Pi doesn't need
@@ -396,12 +420,13 @@ pretrained models into `backend/.test-cache/`.
   `health.py` and `health_check.py` give levels and run the label check.
 - Training: `training.py` runs training and predictions in separate processes; `experiments.py` runs
   Find a better model; `augment.py` varies training photos; `checkup.py` makes the training check.
-- Kinds of model: `finder.py` finds things in photos; `anomaly.py` spots what's unusual; `poses.py`
+- Kinds of model: `finder.py` finds things in photos; `outline.py` outlines things, with MobileSAM
+  for click to outline; `anomaly.py` spots what's unusual; `poses.py`
   sorts poses and hand signs; `sounds.py` sorts sounds; `textmodels.py` sorts text; `tables.py`
   predicts from spreadsheets.
 - Understanding models: `explain.py` makes heatmaps and word weights; `slices.py` finds where a model
   fails; `compare.py` compares models; `cards.py` writes model cards.
-- `webapp.py` turns models into web apps, and `system.py` reports the training device and storage.
+- `webapp.py` turns models into web apps, `pi.py` into Raspberry Pi kits, and `system.py` reports the training device and storage.
 
 Each kind of model writes its own readable `train.py` and `predict.py` and runs them in a separate
 process, so a model trained in the app behaves exactly like one trained from its download.
