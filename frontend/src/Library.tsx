@@ -5,13 +5,16 @@ import type { Brick } from "./types";
 
 export type LibraryFocus =
   | { state: "empty" }
-  | { state: "open"; name: string; type: string }
+  | { state: "open"; name: string; type: string; brick?: string }
   | { state: "complete" };
 
 interface Props {
   onAdd: (brick: Brick) => void;
   focus: LibraryFocus;
 }
+
+/** Bricks whose output only one brick can use. */
+const ONLY_INTO: Record<string, string> = { pretrained_writer: "generate" };
 
 export function Library({ onAdd, focus }: Props) {
   const { catalogue, bricks, mode } = useEditor();
@@ -30,6 +33,8 @@ export function Library({ onAdd, focus }: Props) {
   const fits = (brick: Brick) => {
     if (focus.state === "empty") return brick.group === "socket";
     if (focus.state === "complete") return false;
+    const only = focus.brick ? ONLY_INTO[focus.brick] : undefined;
+    if (only) return brick.id === only;
     return brick.inputs.some((port) => port.accepts.includes(focus.type));
   };
   const search = query.trim().toLowerCase();
@@ -45,8 +50,10 @@ export function Library({ onAdd, focus }: Props) {
           <>
             <PortShape type={focus.type} size={26} />
             <div className="next-text">
-              <strong>{beginner ? `Next: add something that takes ${typeName(focus.type)}` : `Connect ${typeName(focus.type)}`}</strong>
-              <span>{beginner ? catalogue.portTypes[focus.type]?.description : `from ${focus.name}`}</span>
+              <strong>{focus.brick && ONLY_INTO[focus.brick]
+                ? `Next: add ${bricks[ONLY_INTO[focus.brick]]?.name ?? "the task head"}`
+                : beginner ? `Next: add something that takes ${typeName(focus.type)}` : `Connect ${typeName(focus.type)}`}</strong>
+              <span>{focus.brick && ONLY_INTO[focus.brick] ? `It's the only thing that fits after ${focus.name}.` : beginner ? catalogue.portTypes[focus.type]?.description : `from ${focus.name}`}</span>
             </div>
           </>
         )}

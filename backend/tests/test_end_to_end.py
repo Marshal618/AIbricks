@@ -2,6 +2,7 @@
 import csv
 import io
 import math
+import os
 import random
 import subprocess
 import sys
@@ -196,6 +197,7 @@ def test_kits_start_half_built_and_complete_as_instructed():
         "sensor_watchdog": ["detect_anomalies"],
         "ticket_sorter": ["mean_pool", "classify"],
         "text_generator": ["generate"],
+        "writer_tuner": ["generate"],
         "translator": ["generate"],
         "vit_classifier": ["classify"],
     }
@@ -259,6 +261,8 @@ NLP_BUILDS = {
     "composite": chain(TXT, ("text_classifier", {"classes": "a, b"})),
     "composite_encoder": chain(TXT, ("transformer_text_encoder", {}), ("predict_number", {})),
     "distilbert": chain(TXT, ("pretrained_language", {}), ("mean_pool", {}), ("classify", {"classes": "a, b"})),
+    "writer": chain(("text_input", {"max_length": 32}), ("pretrained_writer", {}), ("generate", {})),
+    "granite_writer": chain(TXT, ("pretrained_writer", {"model": "Granite 4.0 350M", "adjust_layers": 1}), ("generate", {})),
 }
 
 
@@ -313,10 +317,41 @@ def test_nlp_project_trains_and_generates(name, tmp_path):
     (chain(TXT, ("pretrained_language", {}), ("generate", {})), "not generating text"),
     (chain(("image_folder", {"image_size": 64}), ("pretrained_vision", {}), ("predict_number", {})), "224×224"),
     (chain(SER, ("lstm", {"hidden": 16}), ("generate", {})), "needs a Text input"),
+    (chain(TXT, ("pretrained_writer", {}), ("mean_pool", {}), ("classify", {"classes": "a, b"})), "straight to Generate text"),
+    (chain(TXT, EMB, ("pretrained_writer", {}), ("generate", {})), "takes Text"),
+    (chain(TXT, ("pretrained_writer", {"model": "GPT-9"}), ("generate", {})), "Model must be one of"),
 ])
 def test_invalid_nlp_builds_explain_themselves(build, fragment):
     analysis = analyse(GraphIn(**build))
     assert any(fragment in i.message for i in analysis.issues), analysis.issues
+
+
+def test_a_pretrained_writer_is_adjusted_on_your_text_and_chats(tmp_path):
+    """Downloads SmolLM2 135M once into the test cache, adjusts its last 2 layers, then writes and chats."""
+    graph = GraphIn(**NLP_BUILDS["writer"])
+    analysis = analyse(graph)
+    assert analysis.ok, analysis.issues
+    assert analysis.shapes["n0"] == "32 tokens, using SmolLM2 135M's own tokenizer"
+    files = generate(graph, analysis)
+    assert "LEARNING_RATE = 0.0001" in files["train.py"] and "transformers>=4.56" in files["requirements.txt"]
+    assert "--chat" in files["generate.py"] and "270 MB" in files["README.md"]
+    for filename, contents in files.items():
+        (tmp_path / filename).write_text(contents)
+    (tmp_path / "data").mkdir()
+    random.seed(2)
+    (tmp_path / "data/corpus.txt").write_text("\n".join(" ".join(random.choices(_WORDS, k=12)) + "." for _ in range(80)))
+    env = {**os.environ, "HF_HOME": str(Path(__file__).parent.parent / ".test-cache" / "huggingface")}
+    done = subprocess.run([sys.executable, "train.py"], cwd=tmp_path, capture_output=True, text=True, timeout=600, env=env)
+    assert done.returncode == 0, done.stderr
+    import torch
+
+    saved = torch.load(tmp_path / "model.pt", weights_only=True)["model"]
+    assert saved and all(".layers.28." in key or ".layers.29." in key or key.endswith("norm.weight") for key in saved), list(saved)[:5]
+    env["HF_HUB_OFFLINE"] = "1"  # after the first download it works without the internet
+    for arguments in (["the quick"], ["--chat", "Say hello."]):
+        out = subprocess.run([sys.executable, "generate.py", *arguments], cwd=tmp_path, capture_output=True, text=True, timeout=180, env=env)
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.strip()
 
 
 def test_translator_inputs_must_not_be_swapped():

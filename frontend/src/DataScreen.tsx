@@ -9,6 +9,7 @@ import { FIND_SUGGESTED, FindLabels, findReady } from "./Find";
 import { OUTLINE_SUGGESTED, OutlineLabels, outlineReady } from "./OutlineThings";
 import { TableData } from "./TableModels";
 import { PoseGuide } from "./Pose";
+import { WritingCheck, WritingData } from "./Writer";
 import type { DatasetSummary, GraphPayload, Mode, SavedModel } from "./types";
 
 const KIND_NAMES: Record<DatasetSummary["kind"], string> = { image: "Images", text: "Text", table: "Spreadsheet (CSV)", sound: "Sound" };
@@ -27,12 +28,15 @@ const SIDE: { id: Tab; name: string }[] = [
 // A good start for each kind of data, per category. Training can begin with fewer.
 const TARGET: Record<DatasetSummary["kind"], number> = { image: 20, text: 16, sound: 20, table: 0 };
 const MINIMUM: Record<DatasetSummary["kind"], number> = { image: 2, text: 4, sound: 4, table: 0 };
+const WRITING_MINIMUM = 1500;
+const WRITING_SUGGESTED = 20000;
 
 function enoughData(dataset: DatasetSummary) {
   if (dataset.kind === "table") return dataset.labelled > 0;
   if (dataset.goal === "unusual") return (dataset.counts.Normal ?? 0) >= UNUSUAL_MINIMUM;
   if (dataset.goal === "find") return findReady(dataset);
   if (dataset.goal === "outline") return outlineReady(dataset);
+  if (dataset.goal === "write") return (dataset.words ?? 0) >= WRITING_MINIMUM;
   return dataset.categories.length >= 2 && dataset.categories.every((name) => (dataset.counts[name] ?? 0) >= MINIMUM[dataset.kind]);
 }
 
@@ -52,7 +56,18 @@ function NextStep({ dataset, onTab }: { dataset: DatasetSummary; onTab: (tab: Ta
   // Unusual photos are optional, so only normal ones count towards being ready.
   const short = dataset.goal === "unusual" ? [] : dataset.categories.filter((name) => (dataset.counts[name] ?? 0) < target);
   let step: number, text: string, button: string, tab: Tab, extra: { label: string; tab: Tab } | null = null, anchor: string | null = null;
-  if (dataset.goal === "unusual" && !newest && (dataset.counts.Normal ?? 0) < UNUSUAL_SUGGESTED) {
+  if (dataset.goal === "write" && !newest && (dataset.words ?? 0) < WRITING_SUGGESTED) {
+    const words = dataset.words ?? 0;
+    [step, text, button, tab] = [1, words < WRITING_MINIMUM
+      ? `Add text in the style you want. It needs ${WRITING_MINIMUM.toLocaleString()} words to train; it has ${words.toLocaleString()}.`
+      : `Add more text if you can. ${WRITING_SUGGESTED.toLocaleString()} words or so teaches your style better; it has ${words.toLocaleString()}.`, "Add text", "label"];
+    if (enoughData(dataset)) extra = { label: "Train anyway", tab: "models" };
+  } else if (dataset.goal === "write" && !newest) {
+    [step, text, button, tab] = [3, "Your text is ready. Teach a writer your style.", "Train", "models"];
+  } else if (dataset.goal === "write" && newest) {
+    [step, text, button, tab] = [3, `Your newest writer guesses your next word ${score(newest)} of the time. Chat with it.`, "Try it", "models"];
+    anchor = "#newest-model";
+  } else if (dataset.goal === "unusual" && !newest && (dataset.counts.Normal ?? 0) < UNUSUAL_SUGGESTED) {
     const normal = dataset.counts.Normal ?? 0;
     [step, text, button, tab] = [1, `Add photos of normal things. Aim for ${UNUSUAL_SUGGESTED}; it has ${normal}.`, "Add data", "label"];
     if (enoughData(dataset)) extra = { label: "Train anyway", tab: "models" };
@@ -140,8 +155,8 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
     event.preventDefault();
     setProblem(null);
     try {
-      const chosen = kind === "image" ? goal : "sort";
-      onOpen((await api.createDataset(name, kind, kind === "table" || chosen === "unusual" ? [] : splitNames(categories), chosen, points)).id);
+      const chosen = kind === "image" ? (goal === "write" ? "sort" : goal) : kind === "text" && goal === "write" ? "write" : "sort";
+      onOpen((await api.createDataset(name, kind, kind === "table" || chosen === "unusual" || chosen === "write" ? [] : splitNames(categories), chosen, points)).id);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "The dataset couldn't be created.");
     }
@@ -187,6 +202,13 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
                 <label><input type="radio" name="dataset-goal" checked={goal === "pose"} onChange={() => setGoal("pose")} />Sort body poses or hand signs, like exercises or gestures</label>
               </fieldset>
             )}
+            {kind === "text" && (
+              <fieldset className="dataset-kind">
+                <legend>What should it do?</legend>
+                <label><input type="radio" name="dataset-text-goal" checked={goal !== "write"} onChange={() => setGoal("sort")} />Sort text into categories, like support emails</label>
+                <label><input type="radio" name="dataset-text-goal" checked={goal === "write"} onChange={() => setGoal("write")} />Write like this text, and chat, with a small language model</label>
+              </fieldset>
+            )}
             {kind === "image" && goal === "pose" && (
               <fieldset className="dataset-kind">
                 <legend>Which points should it look at?</legend>
@@ -194,7 +216,7 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
                 <label><input type="radio" name="dataset-points" checked={points === "hands"} onChange={() => setPoints("hands")} />Hands, for signs like thumbs up or a peace sign</label>
               </fieldset>
             )}
-            {kind !== "table" && !(kind === "image" && goal === "unusual") && <label className="field">
+            {kind !== "table" && !(kind === "image" && goal === "unusual") && !(kind === "text" && goal === "write") && <label className="field">
               <span>{kind === "image" && goal === "find" ? "Things to find (optional)" : kind === "image" && goal === "outline" ? "Things to outline (optional)" : "Categories (optional)"}</span>
               <input type="text" value={categories} placeholder={kind === "sound" ? "For example: Clap, Whistle, Background noise" : kind === "image" && goal === "find" ? "For example: Screw, Washer" : kind === "image" && goal === "outline" ? "For example: Leaf, Stain" : kind === "image" && goal === "pose" ? (points === "hands" ? "For example: Thumbs up, Peace, Fist, No sign" : "For example: Arms up, Squat, Standing") : "For example: Cat, Dog"} onChange={(event) => setCategories(event.target.value)} />
               <span className="muted small">Separate them with commas. You can also add them later, or take them from an open dataset.</span>
@@ -213,6 +235,8 @@ function DatasetList({ mode, onOpen }: { mode: Mode; onOpen: (id: string) => voi
                   <span className="muted small">
                     {row.kind === "table"
                       ? `Spreadsheet · ${row.labelled.toLocaleString()} rows · ${row.columns?.length ?? 0} columns`
+                      : row.goal === "write"
+                      ? `Writing · ${(row.words ?? 0).toLocaleString()} words · ${row.labelled.toLocaleString()} ${row.labelled === 1 ? "piece" : "pieces"}`
                       : `${KIND_NAMES[row.kind]} · ${row.categories.length} ${row.categories.length === 1 ? "category" : "categories"} · ${row.labelled.toLocaleString()} labelled${row.unsorted ? ` · ${row.unsorted.toLocaleString()} unsorted` : ""}`}
                   </span>
                 </div>
@@ -336,6 +360,8 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild, onOpenDes
                     ? `Find things · ${dataset.labelled.toLocaleString()} photos done · ${dataset.unsorted.toLocaleString()} to box`
                   : dataset.goal === "outline"
                     ? `Outline things · ${dataset.labelled.toLocaleString()} photos done · ${dataset.unsorted.toLocaleString()} to outline`
+                  : dataset.goal === "write"
+                    ? `Writing · ${(dataset.words ?? 0).toLocaleString()} words · ${dataset.labelled.toLocaleString()} ${dataset.labelled === 1 ? "piece" : "pieces"}`
                   : dataset.goal === "pose"
                     ? `${dataset.points === "hands" ? "Hand signs" : "Body poses"} · ${dataset.labelled.toLocaleString()} labelled · ${dataset.unsorted.toLocaleString()} unsorted`
                   : `${KIND_NAMES[dataset.kind]} · ${dataset.labelled.toLocaleString()} labelled · ${dataset.unsorted.toLocaleString()} unsorted`}
@@ -362,7 +388,8 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild, onOpenDes
         </nav>
 
         {tab === "overview" && <DatasetOverview dataset={dataset} beginner={beginner} onSaved={setDataset} onLabel={() => setTab("label")} />}
-        {tab === "health" && <DataHealthTab dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
+        {tab === "health" && dataset.goal === "write" && <WritingCheck dataset={dataset} />}
+        {tab === "health" && dataset.goal !== "write" && <DataHealthTab dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
         {tab === "versions" && <DatasetVersions dataset={dataset} beginner={beginner} onRestored={setDataset} />}
         {tab === "models" && <DatasetModels dataset={dataset} beginner={beginner} onBuild={() => onBuild(dataset)} onChanged={() => void load()} onOpenDesign={(graph) => onOpenDesign(graph, dataset.id)} onAddData={() => setTab("label")} />}
 
@@ -370,8 +397,9 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild, onOpenDes
 
         {tab === "label" && dataset.goal === "unusual" && <UnusualGuide dataset={dataset} />}
         {tab === "label" && dataset.goal === "pose" && <PoseGuide dataset={dataset} />}
-        {tab === "label" && dataset.kind !== "table" && dataset.goal !== "unusual" && <h2 className="section-title">{dataset.goal === "find" ? "Things to find" : dataset.goal === "outline" ? "Things to outline" : "Categories"}</h2>}
-        {tab === "label" && dataset.kind !== "table" && dataset.goal !== "unusual" && <section className="card">
+        {tab === "label" && dataset.goal === "write" && <WritingData dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
+        {tab === "label" && dataset.kind !== "table" && dataset.goal !== "unusual" && dataset.goal !== "write" && <h2 className="section-title">{dataset.goal === "find" ? "Things to find" : dataset.goal === "outline" ? "Things to outline" : "Categories"}</h2>}
+        {tab === "label" && dataset.kind !== "table" && dataset.goal !== "unusual" && dataset.goal !== "write" && <section className="card">
           <h2>{dataset.goal === "find" ? "Things to find" : dataset.goal === "outline" ? "Things to outline" : beginner ? "The answers your model will choose between" : "Categories"}</h2>
           {dataset.categories.length === 0 && <p className="muted small">{dataset.goal === "find" ? "Name each kind of thing it should draw boxes around, like Screw or Car." : dataset.goal === "outline" ? "Name each kind of thing it should outline, like Leaf or Stain." : beginner ? "Categories are the answers your model will learn to give, like Cat or Dog." : "No categories yet."}</p>}
           <ul className="category-list">
@@ -394,7 +422,7 @@ function DatasetDetail({ mode, datasetId, initialTab, onBack, onBuild, onOpenDes
         {tab === "label" && dataset.goal === "find" && <FindLabels dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
         {tab === "label" && dataset.goal === "outline" && <OutlineLabels dataset={dataset} beginner={beginner} onChanged={() => void load()} />}
 
-        {tab === "label" && (dataset.kind === "image" || dataset.kind === "text") && dataset.goal !== "find" && dataset.goal !== "outline" && <DatasetLabels
+        {tab === "label" && (dataset.kind === "image" || dataset.kind === "text") && dataset.goal !== "find" && dataset.goal !== "outline" && dataset.goal !== "write" && <DatasetLabels
           dataset={dataset}
           onChanged={() => void load()}
           onUseCategories={(names) => void run(() => api.addDatasetCategories(datasetId, names))}

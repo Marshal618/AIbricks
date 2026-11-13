@@ -1,4 +1,11 @@
 """Readable PyTorch source for each brick. Only the bricks a build uses are written to its bricks.py."""
+from .catalogue import WRITERS
+
+_WRITER_TABLE = "\n".join(
+    f"        {name!r}: {{'repo': {spec['repo']!r}, 'hidden': {spec['hidden']}, 'heads': {spec['heads']}, "
+    f"'kv_heads': {spec['kv_heads']}, 'ffn': {spec['ffn']}, 'vocab': {spec['vocab']}}},"
+    for name, spec in WRITERS.items()
+)
 
 _RECURRENT = '''class @@CLASS@@(nn.Module):
     """@@DOC@@"""
@@ -288,6 +295,51 @@ SOURCES = {
     def forward(self, x):
         return self.model(input_ids=x, attention_mask=(x != 0).long()).last_hidden_state
 '''),
+    "pretrained_writer": ("PretrainedWriter", '''class PretrainedWriter(nn.Module):
+    """Pretrained writer: a small open model from Hugging Face that already writes text.
+
+    Only its last few layers change while training, so it keeps what it already knows.
+    """
+
+    # Where each model downloads from, and its sizes.
+    MODELS = {
+@@WRITERS@@
+    }
+
+    def __init__(self, name, adjust_layers=2, pretrained=True):
+        super().__init__()
+        from transformers import AutoConfig, AutoModelForCausalLM
+
+        spec = self.MODELS[name]
+        self.repo = spec["repo"]
+        if pretrained:
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(self.repo, dtype=torch.float32)
+            except OSError as error:
+                raise RuntimeError(
+                    f"Could not download {name} from Hugging Face. Check your internet connection and try again. "
+                    "After the first download it works offline."
+                ) from error
+        else:
+            # A stand-in with the same sizes but only 2 layers, so the test run needs no download.
+            config = AutoConfig.for_model(
+                "llama", hidden_size=spec["hidden"], num_attention_heads=spec["heads"], num_key_value_heads=spec["kv_heads"],
+                intermediate_size=spec["ffn"], vocab_size=spec["vocab"], num_hidden_layers=2, tie_word_embeddings=True,
+            )
+            self.model = AutoModelForCausalLM.from_config(config)
+        # Some models, such as Granite, divide their word scores by a fixed number.
+        self.logits_scaling = float(getattr(self.model.config, "logits_scaling", None) or 1.0)
+        for parameter in self.model.parameters():
+            parameter.requires_grad = False
+        body = self.model.base_model
+        for part in [*body.layers[-adjust_layers:], body.norm]:
+            for parameter in part.parameters():
+                parameter.requires_grad = True
+
+    def forward(self, x):
+        # What the model makes of each position. Generate text turns this into a score for every word.
+        return self.model.base_model(input_ids=x).last_hidden_state
+'''.replace("@@WRITERS@@", _WRITER_TABLE)),
     "pretrained_vision": ("PretrainedVisionTransformer", '''class PretrainedVisionTransformer(nn.Module):
     """Pretrained vision transformer: ViT-B/16 from torchvision, without its final layer."""
 
@@ -328,6 +380,17 @@ SOURCES = {
 
     def forward(self, x):
         return self.output(x)
+'''),
+    "generate_writer": ("PretrainedWriterHead", '''class PretrainedWriterHead(nn.Module):
+    """Generate text with a pretrained writer: reuses the writer's own word scores, so it can write from the start."""
+
+    def __init__(self, writer):
+        super().__init__()
+        self.output = writer.model.get_output_embeddings()  # shared with the writer, not a copy
+        self.scaling = writer.logits_scaling
+
+    def forward(self, x):
+        return self.output(x) / self.scaling
 '''),
     "dense": ("DenseLayer", '''class DenseLayer(nn.Module):
     """Dense layer: mixes a summary's numbers together."""

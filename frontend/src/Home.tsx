@@ -27,6 +27,7 @@ const KIND = {
   detect: { name: "Find things", className: "is-image" },
   outline: { name: "Outlines", className: "is-image" },
   forecast: { name: "Forecast", className: "is-table" },
+  writer: { name: "Writer", className: "is-text" },
 } as const;
 
 const STATUS: Record<string, { name: string; className: string; mark: string }> = {
@@ -280,6 +281,8 @@ export function Home({ mode, currentProjectId, onNewModel, onContinueModel, onOp
                     <span className="muted small">
                       {row.kind === "table"
                         ? `${row.labelled.toLocaleString()} rows${row.columns ? ` · ${row.columns.length} columns` : ""}`
+                        : row.goal === "write"
+                        ? `Writing · ${(row.words ?? 0).toLocaleString()} words`
                         : `${row.labelled.toLocaleString()} labelled · ${row.categories.length} ${row.categories.length === 1 ? "category" : "categories"}${row.unsorted ? ` · ${row.unsorted.toLocaleString()} unsorted` : ""}`}
                     </span>
                   </div>

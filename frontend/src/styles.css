@@ -876,3 +876,19 @@ polyline.outline-shape.is-preview { fill: none; }
 .forecast-views { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 .forecast-views .is-active { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); }
 .forecast-input { display: block; width: 100%; max-width: 520px; font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+
+/* Writer: adding text, and chatting with it next to the writer as downloaded */
+.writing-input { display: block; width: 100%; font: inherit; font-size: 13px; line-height: 1.45; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); resize: vertical; }
+.writing-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.writer-compare { margin: 4px 0 8px; }
+.writer-log { display: grid; gap: 14px; max-height: 520px; overflow-y: auto; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.writer-exchange { display: grid; gap: 6px; }
+.writer-you { margin: 0; padding: 6px 10px; border-radius: var(--radius); background: var(--accent-tint); white-space: pre-wrap; overflow-wrap: anywhere; }
+.writer-you > span, .writer-answer > span { display: block; margin-bottom: 2px; }
+.writer-answers { display: grid; gap: 8px; }
+.writer-answers.is-pair { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.writer-answer { min-width: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.writer-answer p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
+.writer-answer.is-original { border-style: dashed; }
+.writer-answer.is-original p { color: var(--ink-soft); }
+.writer-answer.is-real { background: var(--accent-tint); border-color: transparent; }

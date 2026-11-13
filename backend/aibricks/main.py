@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer
 
 
 @contextlib.asynccontextmanager
@@ -193,7 +193,7 @@ def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max
 
 
 @app.get("/api/train/current")
-def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast"] | None = None) -> dict:
+def get_training(kind: Literal["image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast", "writer"] | None = None) -> dict:
     return {"job": training.public(training.latest(kind) if kind else training.current())}
 
 
@@ -1027,6 +1027,54 @@ def forecast_details(job_id: str) -> dict:
 @app.post("/api/models/{job_id}/forecast-from")
 def forecast_from_values(job_id: str, request: ForecastFrom) -> dict:
     return _dataset_reply(forecast.forecast_from, job_id, request.values)
+
+
+# ------------------------------------------------------------------- writing
+
+class WriterTraining(BaseModel):
+    model: Literal[tuple(catalogue.WRITERS)] = writer.DEFAULT_MODEL  # type: ignore[valid-type]
+    strength: Literal["light", "more"] = "light"
+    length: Literal["quick", "balanced", "thorough"] = "balanced"
+
+
+class Turn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=writer.MAX_PROMPT * 2)
+
+
+class WriterAsk(BaseModel):
+    prompt: str = Field(min_length=1, max_length=writer.MAX_PROMPT)
+    chat: bool = True
+    history: list[Turn] = Field(default_factory=list, max_length=40)
+    compare: bool = False
+    seed: int = Field(default=0, ge=0, le=1_000_000)
+
+
+@app.get("/api/datasets/{dataset_id}/writer/analysis")
+def analyse_writing(dataset_id: str) -> dict:
+    return _dataset_reply(writer.analyse, dataset_id)
+
+
+@app.post("/api/datasets/{dataset_id}/train-writer", dependencies=[Depends(_needs_json)])
+def train_writer(dataset_id: str, request: WriterTraining) -> dict:
+    try:
+        return {"job": training.public(writer.start(dataset_id, request.model, request.strength, request.length))}
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/writer")
+def writer_details(job_id: str) -> dict:
+    return _dataset_reply(writer.details, job_id)
+
+
+@app.post("/api/models/{job_id}/write")
+async def write_with(job_id: str, request: WriterAsk) -> dict:
+    turns = [turn.model_dump() for turn in request.history]
+    try:
+        return await run_in_threadpool(writer.ask, job_id, request.prompt, request.chat, turns, request.compare, request.seed)
+    except training.TrainingError as error:
+        raise _raise(error) from None
 
 
 # ------------------------------------------------------------------- data health

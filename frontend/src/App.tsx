@@ -687,7 +687,7 @@ function Editor({ catalogue }: { catalogue: Catalogue }) {
   const libraryFocus: LibraryFocus = !nodes.length
     ? { state: "empty" }
     : nextNode
-      ? { state: "open", name: bricks[nextNode.data.brickId].name, type: bricks[nextNode.data.brickId].output as string }
+      ? { state: "open", name: bricks[nextNode.data.brickId].name, type: bricks[nextNode.data.brickId].output as string, brick: nextNode.data.brickId }
       : { state: "complete" };
   const typedEdges = useMemo(() => edges.map((edge) => {
     const source = nodes.find((node) => node.id === edge.source);

@@ -96,7 +96,9 @@ export interface DatasetSummary {
   columns?: string[];
   /** Photos only: "unusual" learns what normal looks like and spots what isn't; "find" draws boxes around things;
    * "pose" sorts the body poses or hand signs in photos; "outline" marks the exact shape of things. */
-  goal?: "sort" | "unusual" | "find" | "pose" | "outline";
+  goal?: "sort" | "unusual" | "find" | "pose" | "outline" | "write";
+  /** Writing only: how many words of text it holds. */
+  words?: number;
   /** Sorting poses only: the points of a whole body, or of hands. */
   points?: "body" | "hands";
 }
@@ -124,7 +126,19 @@ export interface TableAnalysis {
 }
 
 export interface TableMetrics {
-  task: "category" | "number" | "unusual" | "detect" | "pose" | "outline" | "forecast";
+  task: "category" | "number" | "unusual" | "detect" | "pose" | "outline" | "forecast" | "writer";
+  /** Writing: how well the writer guesses held-back text, before and after it was adjusted. */
+  model?: string;
+  adjustLayers?: number;
+  pieces?: number;
+  words?: number;
+  checkTokens?: number;
+  lossBefore?: number;
+  lossAfter?: number;
+  accuracyBefore?: number;
+  accuracyAfter?: number;
+  bestEpoch?: number;
+  samples?: WriterSample[];
   /** Forecasting: errors on the most recent readings, for the model and for two simple guesses. */
   readings?: number;
   horizon?: number;
@@ -239,7 +253,7 @@ export interface SavedModel {
   modelBytes: number;
   startedAt: number;
   review: { total: number; correct: number; categories?: Record<string, { correct: number; total: number }> } | null;
-  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose" | "outline" | "forecast";
+  task: "image" | "text" | "table" | "sound" | "anomaly" | "detect" | "pose" | "outline" | "forecast" | "writer";
   metrics: TableMetrics | null;
   totalEpochs?: number;
   trainCount?: number;
@@ -745,4 +759,33 @@ export interface ForecastDetails {
   history: { times: string[]; values: number[] };
   forecast: ForecastRange;
   backtest: ForecastRange & { from: string; real: number[] };
+}
+
+export interface WriterSample {
+  prompt: string;
+  real: string;
+  before: string;
+  after: string;
+}
+
+export interface WriterModelChoice {
+  name: string;
+  download: string;
+  downloaded: boolean;
+  layers: number;
+}
+
+export interface WriterAnalysis {
+  pieces: number;
+  words: number;
+  problems: string[];
+  notes: string[];
+  models: WriterModelChoice[];
+  minWords: number;
+  suggestedWords: number;
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
 }

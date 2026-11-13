@@ -554,6 +554,11 @@ def _review_forecast(job: Job) -> None:
     _save_held_out(job, "forecast", [tuple(row) for row in held])
 
 
+def _review_writer(job: Job) -> None:
+    """Keeps train.py's scores and its few side-by-side samples of held-back text."""
+    job.metrics = json.loads((_folder(job) / "data" / "metrics.json").read_text(encoding="utf-8"))
+
+
 def _summarise_review(job: Job, rows: list[dict]) -> None:
     categories: dict[str, dict[str, int]] = {name: {"correct": 0, "total": 0} for name in job.categories}
     for row in rows:
@@ -591,7 +596,7 @@ def _watch(job: Job, process: subprocess.Popen, log: Path) -> None:
         _save(job)
     if job.hasModel and not _shutting_down:
         try:
-            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose, "outline": _review_outline, "forecast": _review_forecast}.get(job.task, _review)(job)
+            {"text": _review_text, "table": _review_table, "sound": _review_files, "anomaly": _review_anomaly, "detect": _review_detect, "pose": _review_pose, "outline": _review_outline, "forecast": _review_forecast, "writer": _review_writer}.get(job.task, _review)(job)
         except (OSError, ValueError, KeyError) as problem:
             job.reviewError = f"The held-back images could not be checked: {problem}"
     with _lock:
@@ -701,7 +706,7 @@ def _launch(job: Job, folder: Path) -> Job:
 
 
 def _require(job_id: str) -> Job:
-    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast"):
+    for task in ("image", "text", "table", "sound", "anomaly", "detect", "pose", "outline", "forecast", "writer"):
         job = latest(task)
         if job is not None and job.id == job_id:
             return job
@@ -846,7 +851,7 @@ LIVE_CHECK_SECONDS = 5
 
 
 class _LivePredictor:
-    def __init__(self, job: Job, script: str, unreadable: str):
+    def __init__(self, job: Job, script: str, unreadable: str, threads: str = "2"):
         import queue
 
         self.job_id = job.id
@@ -855,7 +860,7 @@ class _LivePredictor:
         self.errors: collections.deque[str] = collections.deque(maxlen=20)
         folder = _folder(job)
         self.process = subprocess.Popen(
-            [sys.executable, "-I", "-u", "-c", script], cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": "2"},
+            [sys.executable, "-I", "-u", "-c", script], cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": threads},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace", bufsize=1,
         )
         self.used = time.time()
@@ -889,13 +894,17 @@ class _LivePredictor:
     def ask(self, data: bytes, explain_it: bool = False) -> dict:
         import base64
 
+        return self.ask_json({"data": base64.b64encode(data).decode(), "explain": explain_it}, LIVE_ANSWER_SECONDS)
+
+    def ask_json(self, request: dict, timeout: float) -> dict:
         self.used = time.time()
         try:
-            self.process.stdin.write(json.dumps({"data": base64.b64encode(data).decode(), "explain": explain_it}) + "\n")
+            self.process.stdin.write(json.dumps(request) + "\n")
             self.process.stdin.flush()
         except (BrokenPipeError, OSError):
             raise TrainingError(500, self._problem("The live model stopped. Try again.")) from None
-        line = self._next(LIVE_ANSWER_SECONDS)
+        line = self._next(timeout)
+        self.used = time.time()
         if line is None:
             raise TrainingError(504, "The model took too long to answer.")
         reply = json.loads(line)
@@ -953,6 +962,29 @@ def ask_live(job: Job, script: str, data: bytes, explain_it: bool, unreadable: s
             _live = _LivePredictor(job, script, unreadable)
             threading.Thread(target=_close_when_idle, args=(_live,), daemon=True).start()
         return _live.ask(data, explain_it)
+
+
+def ask_live_json(job: Job, script: str, request: dict, timeout: float, unreadable: str) -> dict:
+    """Like ask_live, for models asked with plain JSON, such as a writer. It may use most of the computer."""
+    global _live
+    if job.status == "running" or not job.hasModel:
+        raise TrainingError(409, "This model has no saved file to answer with.")
+    if is_running():
+        raise TrainingError(409, "Wait for training to finish. Both need this computer's full attention.")
+    with _live_lock:
+        if _live is not None and (_live.job_id != job.id or not _live.alive()):
+            _live.close()
+            _live = None
+        if _live is None:
+            _live = _LivePredictor(job, script, unreadable, str(max((os.cpu_count() or 2) - 1, 1)))
+            threading.Thread(target=_close_when_idle, args=(_live,), daemon=True).start()
+        try:
+            return _live.ask_json(request, timeout)
+        except TrainingError as error:
+            if error.status == 504:  # it's still busy writing, so its next answer would belong to this request
+                _live.close()
+                _live = None
+            raise
 
 
 def _close_when_idle(predictor: _LivePredictor) -> None:

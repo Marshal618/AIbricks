@@ -35,11 +35,13 @@ METHODS = {
                 "2023) and a small fully connected part add their guesses together.",
     "pose": "MediaPipe's pose or hand landmarker (Google, Apache 2.0) finds body or hand points, and a small fully "
             "connected network trained on those points, measured from the body or wrist, names the category.",
+    "writer": "A small open language model, downloaded from Hugging Face and run on this computer, with only its last few "
+              "layers adjusted to the dataset's text by predicting each next token. The rest stays as it was trained.",
     "sound": "A frozen pretrained Audio Spectrogram Transformer (MIT/ast-finetuned-audioset-10-10-0.4593) reading 1-second "
              "spectrograms, with a linear classifier trained on each clip and two time-shifted, louder or quieter copies.",
 }
-THINGS = {"forecast": "readings", "outline": "photos", "pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
-THING = {"forecast": "reading", "outline": "photo", "pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
+THINGS = {"writer": "pieces of text", "forecast": "readings", "outline": "photos", "pose": "photos", "detect": "photos", "anomaly": "photos", "image": "photos", "text": "texts", "table": "rows", "sound": "1-second clips"}
+THING = {"writer": "piece of text", "forecast": "reading", "outline": "photo", "pose": "photo", "detect": "photo", "anomaly": "photo", "image": "photo", "text": "text", "table": "row", "sound": "clip"}
 
 
 def _method(job) -> str:
@@ -96,6 +98,8 @@ def _config(job: training.Job) -> dict:
 
 
 def _job_text(job: training.Job, metrics: dict, things: str) -> str:
+    if job.task == "writer":
+        return f"writes and chats like the dataset's text, starting from {metrics.get('model', 'a small open language model')}"
     if job.task == "forecast":
         config = _config(job)
         return f"forecasts “{config.get('value', 'a column')}” {config.get('horizon', '?')} {config.get('stepName', 'step')}s ahead"
@@ -149,6 +153,9 @@ def card(job_id: str) -> dict:
                     "held back to check it.")
         if metrics.get("filled"):
             data.append(f"{metrics['filled']:,} missing readings were filled in from the readings either side.")
+    elif job.task == "writer":
+        data.append(f"Text: {metrics.get('words', 0):,} words in {metrics.get('pieces', 0):,} pieces. About 1 piece in 10 was held "
+                    "back to check it.")
     elif job.task == "table":
         data.append(f"Rows: {job.trainCount:,} to learn from and {job.checkCount:,} held back")
         features = [item["name"] for item in _config(job).get("features", [])]
@@ -165,7 +172,12 @@ def card(job_id: str) -> dict:
         data.append("Some of this data came from open datasets. Their credits are in DATA_SOURCES.md, in the download.")
     sections.append({"title": "Training data", "lines": data})
 
-    if job.task == "forecast":
+    if job.task == "writer":
+        sections.append({"title": "How it was checked", "lines": [
+            f"It read {metrics.get('checkTokens', 0):,} tokens of held-back text it never learned from, and guessed each next token. "
+            "The same was done with the writer as downloaded, so the two can be compared.",
+        ]})
+    elif job.task == "forecast":
         sections.append({"title": "How it was checked", "lines": [
             "The most recent readings were held back and never learned from. From "
             f"{metrics.get('origins', 0)} points in that stretch, it forecast {metrics.get('horizon', '?')} steps ahead using only "
@@ -181,7 +193,15 @@ def card(job_id: str) -> dict:
 
     results = []
     review = job.review or {}
-    if job.task == "forecast":
+    if job.task == "writer" and "lossAfter" in metrics:
+        results.append(f"Guessed the next token of held-back text right {_percent(metrics['accuracyAfter'])} of the time, against "
+                       f"{_percent(metrics['accuracyBefore'])} for the writer as downloaded")
+        results.append(f"Surprise at held-back text (perplexity, lower is better): {math.exp(min(metrics['lossAfter'], 50)):,.1f}, "
+                       f"against {math.exp(min(metrics['lossBefore'], 50)):,.1f} before")
+        caveats.append("It's a small language model. It can state things that aren't true, repeat itself or drift off the subject, "
+                       "so check what it writes before relying on it.")
+        caveats.append("It learned only the style and content of this text. It knows nothing newer than its original training.")
+    elif job.task == "forecast":
         simple = {"last": metrics.get("maeLast"), "season": metrics.get("maeSeason")}
         results.append(f"Average error: {metrics['mae']:,.4g}, where a typical reading is {metrics['typical']:,.4g}")
         results.append(f"The same as last time would be off by {simple['last']:,.4g} on average"

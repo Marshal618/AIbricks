@@ -34,6 +34,8 @@ def _model(job_id: str, dataset: str) -> tuple[training.Job, dict]:
         raise TrainingError(404, "That model wasn't trained on this dataset.")
     if job.status != "finished":
         raise TrainingError(409, f'"{job.projectName}" didn\'t finish training, so it has no results to compare.')
+    if job.task == "writer":
+        raise TrainingError(422, "Writers can't be compared here yet. Each one's score shows how well it guesses held-back text.")
     results = training.held_out(job)
     if results is None:
         raise TrainingError(409, f'"{job.projectName}" was trained before comparisons were added. Train it again to compare it.')

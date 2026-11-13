@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .catalogue import BRICKS, IMAGE, PORT_TYPES, SERIES, SUMMARY, TEXT, TRAINING_DIAL, Brick, Param
+from .catalogue import BRICKS, IMAGE, PORT_TYPES, SERIES, SUMMARY, TEXT, TRAINING_DIAL, WRITERS, Brick, Param
 
 MAX_NODES = 60
 MAX_SUMMARY_SIZE = 1_000_000
@@ -45,6 +45,7 @@ class Shape:
     steps: int = 0
     features: int = 0
     size: int = 0
+    vocab: int = 0  # set by a pretrained writer: how many words its own tokenizer knows
 
     def code(self) -> str:
         if self.kind == IMAGE:
@@ -199,6 +200,8 @@ def _infer(step: Step, socket: Shape | None, target: Shape | None = None) -> Sha
         return x
     if t == "pretrained_language":
         return Shape(SERIES, steps=x.steps, features=768)
+    if t == "pretrained_writer":
+        return Shape(SERIES, steps=x.steps, features=WRITERS[p["model"]]["hidden"], vocab=WRITERS[p["model"]]["vocab"])
     if t == "pretrained_vision":
         if x.channels != 3 or (x.height, x.width) != (224, 224):
             raise ValueError(f"The pretrained vision transformer needs 224×224 colour images, but it receives {x.plain()}. Update the Image folder settings.")
@@ -429,7 +432,18 @@ def analyse(graph: GraphIn) -> Analysis:
         issues.append(Issue("Target text needs a Generate text head.", head_step.origin))
     if head_step and head_step.brick.id == "generate" and target_id and target_id not in lineage.get(head_step.id, set()):
         issues.append(Issue("Generate text must follow the decoder that reads Target text.", head_step.origin))
-    if head_step and head_step.brick.id == "generate" and not decoders and not any(s.brick.id in ("lstm", "gru", "rnn") for s in steps):
+    writers = [s for s in steps if s.brick.id == "pretrained_writer"]
+    for writer in writers:
+        if any(s.brick.id == "embedding" for s in steps):
+            issues.append(Issue("The pretrained writer has its own tokenizer, so it can't share a build with an Embedding layer.", writer.origin))
+        elif target_id:
+            issues.append(Issue("The pretrained writer continues text, so it doesn't use Target text. Remove the Target text input.", writer.origin))
+        elif not (head_step and head_step.brick.id == "generate" and head_step.inputs == [writer.id]):
+            issues.append(Issue("The pretrained writer writes text, so connect its output straight to Generate text. "
+                                "To sort text into categories, use the Pretrained language model.", writer.origin))
+    if writers and socket_shape is not None and sockets:
+        shapes[nodes[sockets[0]][0]] = f"{socket_shape.steps} tokens, using {writers[0].params['model']}'s own tokenizer"
+    if head_step and head_step.brick.id == "generate" and not decoders and not writers and not any(s.brick.id in ("lstm", "gru", "rnn") for s in steps):
         issues.append(Issue("Generate text needs a Transformer decoder or a sequence layer before it, otherwise it can't learn from earlier tokens.", head_step.origin))
     pretrained = [s for s in steps if s.brick.id == "pretrained_language"]
     if pretrained and any(s.brick.id == "embedding" for s in steps):

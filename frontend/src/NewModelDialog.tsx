@@ -11,7 +11,7 @@ interface Props {
   forDataset?: { name: string; kind: "image" | "text" | "table" | "sound" } | null;
 }
 
-const WRITES_TEXT = new Set(["generate", "transformer_decoder", "decoder_only", "decoder_memory"]);
+const WRITES_TEXT = new Set(["generate", "transformer_decoder", "decoder_only", "decoder_memory", "pretrained_writer"]);
 
 export function NewModelDialog({ hasModel, onKit, onBlank, onCancel, forDataset }: Props) {
   const { catalogue, mode } = useEditor();

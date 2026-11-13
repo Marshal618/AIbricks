@@ -24,6 +24,7 @@ models, fetched once the first time a feature needs them.
 | Sort text | Support emails into Billing, Bugs and Other | **Text** |
 | Predict a number or category from a table | House prices, whether a customer leaves | **Spreadsheet (CSV)** |
 | Forecast the next readings of a column | Next week's sales, tomorrow's energy use | **Spreadsheet (CSV)**, then **Forecast** on Train |
+| Write like your text, and chat | Product descriptions in your shop's voice, stories in your style | **Text**, then **Write like this text** |
 
 Every model gets an honest score on examples it never learned from, shows the mistakes it made,
 and can be tried straight away on new examples, including live from your webcam or microphone.
@@ -300,6 +301,28 @@ It only knows the one column's past, so anything else that moves it, such as hol
 seen. Forecasting models can be downloaded as a Python project, but don't become web apps or Raspberry
 Pi kits.
 
+### Write like your text, and chat
+
+Add writing in the style you want, by file or by pasting: stories, notes, emails, product descriptions.
+Each line or paragraph is one piece. It needs at least 1,500 words, and 20,000 or so works better.
+
+On the Train tab, choose a small open language model to start from: SmolLM2 135M or 360M (Hugging
+Face), Granite 4.0 350M (IBM) or Qwen2.5 0.5B (Alibaba). It downloads once (270 MB to 990 MB), then
+runs on your computer with no internet and no AI service. Training adjusts only its last 2 or 6 layers,
+so it keeps what it already knows, and the saved model is small: about 27 MB for SmolLM2 135M.
+
+About 1 piece in 10 is held back. Before and after training, the writer reads that text and guesses
+each next word, so you see whether it really got better at writing like you. If no adjusted version
+beats the original, the original is kept and you're told. A few held-back pieces show what you wrote
+next to how the adjusted and the original writer carry on from the same first words.
+
+**Try it** chats with the writer, or carries on from your opening words, with the original shown
+alongside so you can see what training changed. Both get the same random choices, so the difference
+comes from training. The download includes `chat.py` for using it from the command line.
+
+These are small models, so expect simple answers and the odd mistake or repetition, not ChatGPT.
+Writers don't become web apps or Raspberry Pi kits, and can't be compared with Compare.
+
 ### Design your own in the Model builder
 
 Connect blocks on the canvas: image, text and time-series inputs, convolution, LSTM and transformer
@@ -307,6 +330,16 @@ layers, and pretrained language and vision models. AI Bricks checks that the blo
 works out every shape, then **Test** runs the design on sample data, and **Train** trains it on one
 of your photo datasets. **Code** shows the PyTorch it turns into, and **Export** downloads it as a
 readable project. Designs for other kinds of data train from the downloaded project.
+
+**Pretrained writer** starts from a small open model that can already write and chat, and adjusts it
+to write like your text. Choose SmolLM2 135M or 360M (Hugging Face), Granite 4.0 350M (IBM) or
+Qwen2.5 0.5B (Alibaba). The download is 270 MB to 990 MB, and only once. After that it runs on your
+computer with no internet and no AI service. Training changes only its last few layers, so it keeps
+what it already knows and the saved model is small. Start from the **Pretrained writer** template and
+add **Generate text**. Then export it, put your text in `data/corpus.txt` and run `python train.py`.
+`python generate.py "Once upon a time"` continues your words, and `python generate.py --chat "..."`
+asks it something. Both also work before training. These are small models, so expect simple answers
+and the odd mistake, not ChatGPT.
 
 **Convert to blocks**, in Advanced mode, rebuilds the canvas from an edited `model.py`. The code is
 read with Python's `ast` module and never run. It must use AI Bricks blocks, so custom Python belongs
