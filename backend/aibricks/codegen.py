@@ -8,7 +8,7 @@ from collections import Counter
 
 from . import augment as augmentation
 from .brick_sources import SOURCES
-from .catalogue import IMAGE, SERIES, TEXT, TRAINING_DIAL
+from .catalogue import IMAGE, SERIES, TEXT, TRAINING_DIAL, WRITERS
 from .graph import Analysis, GraphIn, Shape, Step, parse_names
 
 VAR_NAMES = {
@@ -19,13 +19,15 @@ VAR_NAMES = {
     "forecast": "forecast_head", "detect_anomalies": "rebuild_head", "generate": "generate_head",
     "embedding": "embedding", "positional": "positional", "attention": "attention", "mean_pool": "mean_pool",
     "transformer_encoder": "encoder", "transformer_decoder": "decoder",
-    "pretrained_language": "language_model", "pretrained_vision": "vision_model",
+    "pretrained_language": "language_model", "pretrained_vision": "vision_model", "pretrained_writer": "writer",
 }
 
-PRETRAINED = {"backbone", "pretrained_language", "pretrained_vision"}
+PRETRAINED = {"backbone", "pretrained_language", "pretrained_vision", "pretrained_writer"}
 # Bricks that skip padding when told where it is.
 USES_PADDING_MASK = {"attention", "transformer_encoder", "transformer_decoder", "mean_pool", "last_step"}
-NEEDS_TORCH = {"combine", "last_step", "mean_pool", "positional", "decoder_only", "decoder_memory"}
+NEEDS_TORCH = {"combine", "last_step", "mean_pool", "positional", "decoder_only", "decoder_memory", "pretrained_writer"}
+WRITER_TEST_LENGTH = 32  # a writer reads text of any length, so its test run uses short samples to stay quick
+WRITER_LEARNING_RATE = 1e-4  # pretrained writers change too much with the usual learning rate
 
 
 def _fill(template: str, **values: object) -> str:
@@ -52,10 +54,17 @@ def source_key(step: Step) -> str:
         return f"rebuild_{'image' if step.input_shapes[0].kind == IMAGE else 'series'}"
     if brick == "transformer_decoder":
         return "decoder_memory" if len(step.inputs) == 2 else "decoder_only"
+    if brick == "generate" and step.input_shapes[0].vocab:
+        return "generate_writer"
     return brick
 
 
-def _constructor(step: Step, socket: Shape, target: Shape | None = None) -> str:
+def writer_of(analysis: Analysis) -> Step | None:
+    """The build's pretrained writer, if it has one."""
+    return next((s for s in analysis.steps if s.brick.id == "pretrained_writer"), None)
+
+
+def _constructor(step: Step, socket: Shape, target: Shape | None = None, names: dict[str, str] | None = None) -> str:
     t, p = step.brick.id, step.params
     x = step.input_shapes[0] if step.input_shapes else None
     cls = SOURCES[source_key(step)][0]
@@ -77,7 +86,11 @@ def _constructor(step: Step, socket: Shape, target: Shape | None = None) -> str:
         return f"{cls}(pretrained=use_pretrained_weights, freeze={p['freeze']})"
     if t == "mean_pool":
         return f"{cls}()"
+    if t == "pretrained_writer":
+        return f'{cls}("{p["model"]}", adjust_layers={p["adjust_layers"]}, pretrained=use_pretrained_weights)'
     if t == "generate":
+        if x.vocab:
+            return f"{cls}(self.{names[step.inputs[0]]})"
         return f"{cls}({x.features}, vocab_size={(target or socket).features})"
     if t == "pool":
         return f'{cls}(mode="{p["mode"]}")'
@@ -143,12 +156,12 @@ def _model_py(graph: GraphIn, analysis: Analysis) -> str:
     lines.append("    def __init__(self, use_pretrained_weights=True):" if has_backbone else "    def __init__(self):")
     lines.append("        super().__init__()")
     for step in body:
-        lines.append(f"        self.{names[step.id]} = {_constructor(step, socket.output, target.output if target else None)}")
+        lines.append(f"        self.{names[step.id]} = {_constructor(step, socket.output, target.output if target else None, names)}")
     signature = "self, x, target" if target else "self, x"
     lines += ["", f"    def forward({signature}):", f"        # x starts as {socket.output.code()}"]
     if target:
         lines.append(f"        # target starts as {target.output.code()}")
-    if socket.output.kind == TEXT:
+    if socket.output.kind == TEXT and not writer_of(analysis):  # a writer's text has no padding
         lines.append("        padding_mask = x == 0  # token 0 is padding")
     if target:
         lines.append("        target_padding_mask = target == 0")
@@ -835,6 +848,51 @@ def load_datasets():
     return train, NextTokenDataset(numbers[cut:])
 '''
 
+_WRITER_CORPUS = '''"""Loads your text. Edit the marked section, then run: python train.py"""
+import torch
+from torch.utils.data import Dataset
+
+from bricks import PretrainedWriter
+
+@@BANNER@@
+MAX_LENGTH = @@LENGTH@@
+WRITER = PretrainedWriter.MODELS["@@MODEL@@"]["repo"]
+TRAIN_FRACTION = 0.9  # the rest of the text checks the model
+
+
+def load_tokenizer():
+    """The tokenizer the writer was trained with. It downloads with the model."""
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(WRITER)
+
+
+class NextTokenDataset(Dataset):
+    """Each sample is a window of text. The answer is the same window moved one token later."""
+
+    def __init__(self, numbers):
+        self.numbers = torch.tensor(numbers)
+
+    def __len__(self):
+        return max(0, (len(self.numbers) - MAX_LENGTH - 1) // (MAX_LENGTH // 2 or 1) + 1)
+
+    def __getitem__(self, index):
+        start = index * (MAX_LENGTH // 2 or 1)
+        return self.numbers[start : start + MAX_LENGTH], self.numbers[start + 1 : start + MAX_LENGTH + 1]
+
+
+def load_datasets():
+    with open(DATA_FILE, encoding="utf-8") as file:
+        lines = file.read().splitlines(keepends=True)
+    tokenizer = load_tokenizer()
+    numbers = [number for line in lines for number in tokenizer.encode(line, add_special_tokens=False)]
+    cut = int(len(numbers) * TRAIN_FRACTION)
+    if cut <= MAX_LENGTH or len(numbers) - cut <= MAX_LENGTH:
+        minimum = (MAX_LENGTH + 1) * 10 + 1
+        raise ValueError(f"Found {len(numbers)} tokens, but this model needs at least {minimum}.")
+    return NextTokenDataset(numbers[:cut]), NextTokenDataset(numbers[cut:])
+'''
+
 _TEXT_PAIRS = '''"""Loads your text pairs. Edit the marked section, then run: python train.py"""
 import csv
 import random
@@ -915,6 +973,64 @@ def main():
             scores[len(tokenizer.words) :] = float("-inf")  # stay within the words seen in training
             numbers.append(torch.multinomial((scores / TEMPERATURE).softmax(dim=0), 1).item())
     print(tokenizer.decode(numbers))
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+_GENERATE_WRITER = '''"""Writes text with your pretrained writer. Run: python generate.py "your opening words"
+
+Add --chat to ask it something instead: python generate.py --chat "Suggest a name for a bakery"
+Before you train, it uses the writer as it was downloaded.
+"""
+import os
+import sys
+
+import torch
+
+from data import load_tokenizer
+from model import build_model
+
+NEW_TOKENS = 120
+TEMPERATURE = 0.7  # lower is safer, higher is more varied
+TOP_K = 40  # only the 40 likeliest words are considered each time
+WINDOW = 1024  # how many earlier tokens it reads
+REPEAT_PENALTY = 1.2  # makes words it has already written less likely, since small models tend to repeat
+
+
+def main():
+    chat = "--chat" in sys.argv[1:]
+    prompt = " ".join(word for word in sys.argv[1:] if word != "--chat")
+    tokenizer = load_tokenizer()
+    model = build_model()
+    if os.path.exists("model.pt"):
+        # Only the adjusted layers are saved. Everything else comes with the downloaded writer.
+        model.load_state_dict(torch.load("model.pt", weights_only=True)["model"], strict=False)
+    else:
+        print("No model.pt yet, so this is the writer as it was downloaded. Run python train.py to adjust it.", file=sys.stderr)
+    model.eval()
+
+    if chat:
+        text = tokenizer.apply_chat_template([{"role": "user", "content": prompt or "Hello!"}], tokenize=False, add_generation_prompt=True)
+        numbers = tokenizer.encode(text, add_special_tokens=False)
+    else:
+        numbers = tokenizer.encode(prompt, add_special_tokens=False) or [tokenizer.bos_token_id or tokenizer.eos_token_id]
+    start = len(numbers)
+    stops = {tokenizer.eos_token_id, tokenizer.convert_tokens_to_ids("<|im_end|>")} - {None, tokenizer.unk_token_id}
+    with torch.no_grad():
+        for _ in range(NEW_TOKENS):
+            scores = model(torch.tensor([numbers[-WINDOW:]]))[0, -1]
+            written = torch.tensor(sorted(set(numbers[start:])), dtype=torch.long)
+            if len(written):
+                seen = scores[written]
+                scores[written] = torch.where(seen > 0, seen / REPEAT_PENALTY, seen * REPEAT_PENALTY)
+            likeliest = torch.topk(scores, TOP_K)
+            choice = likeliest.indices[torch.multinomial((likeliest.values / TEMPERATURE).softmax(dim=0), 1)].item()
+            if choice in stops:
+                break
+            numbers.append(choice)
+    print(tokenizer.decode(numbers[start:] if chat else numbers, skip_special_tokens=True).strip())
 
 
 if __name__ == "__main__":
@@ -1134,6 +1250,8 @@ def labelling_info(analysis: Analysis) -> tuple[str | None, list[str] | None]:
 
 
 def _generate_py(analysis: Analysis) -> str:
+    if writer_of(analysis):
+        return _GENERATE_WRITER
     return _GENERATE_PAIR if analysis.target else _GENERATE_NEXT
 
 
@@ -1148,6 +1266,9 @@ def _text_data_py(analysis: Analysis) -> str:
                      T_LENGTH=target.output.steps, T_VOCAB=target.output.features, TOKENIZER=tokenizer)
     if task == "generate":
         config = _fill(_BANNER, LINES="# A plain text file containing all your training text.") + 'DATA_FILE = "data/corpus.txt"'
+        writer = writer_of(analysis)
+        if writer:
+            return _fill(_WRITER_CORPUS, BANNER=config, LENGTH=socket.steps, MODEL=writer.params["model"])
         return _fill(_TEXT_CORPUS, BANNER=config, LENGTH=socket.steps, VOCAB=socket.features, TOKENIZER=tokenizer)
 
     pretrained = any(s.brick.id == "pretrained_language" for s in analysis.steps)
@@ -1225,10 +1346,11 @@ def _text_sample_py(analysis: Analysis) -> str:
     socket, head, target = analysis.socket.output, analysis.head, analysis.target
     key = "pairs" if target else head.brick.id
     classes = len(parse_names(head.params["classes"])) if head.brick.id == "classify" else 0
+    writer = writer_of(analysis)
     return _SAMPLE_HEADER.replace("import math\n\n", "") + _fill(
         _TEXT_SAMPLES[key],
-        LENGTH=socket.steps,
-        VOCAB=socket.features,
+        LENGTH=min(socket.steps, WRITER_TEST_LENGTH) if writer else socket.steps,
+        VOCAB=writer.output.vocab if writer else socket.features,
         CLASSES=classes,
         T_LENGTH=target.output.steps if target else 0,
         T_VOCAB=target.output.features if target else 0,
@@ -1377,7 +1499,7 @@ def main():
         # Keep the version that did best on the check data.
         if val_loss < best_loss:
             best_loss = val_loss
-            checkpoint["model"] = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            checkpoint["model"] = @@SAVE_STATE@@
             save(checkpoint)
 @@AFTER@@
     save(checkpoint)
@@ -1416,6 +1538,8 @@ def _expected_shape(analysis: Analysis) -> str:
         return f"(BATCH_SIZE, {head.params['horizon']}, {socket.features})"
     if t == "generate":
         expected = analysis.target.output if analysis.target else socket
+        if head.input_shapes[0].vocab:
+            return f"(BATCH_SIZE, {min(expected.steps, WRITER_TEST_LENGTH)}, {head.input_shapes[0].vocab})"
         return f"(BATCH_SIZE, {expected.steps}, {expected.features})"
     if socket.kind == IMAGE:
         return f"(BATCH_SIZE, {socket.channels}, {socket.height}, {socket.width})"
@@ -1424,6 +1548,13 @@ def _expected_shape(analysis: Analysis) -> str:
 
 def _loss_def(analysis: Analysis) -> str:
     task = analysis.head.brick.id
+    if task == "generate" and writer_of(analysis):
+        # A writer's tokenizer uses every number for a word, so nothing is skipped as padding.
+        return (
+            "_cross_entropy = nn.CrossEntropyLoss()\n\n\n"
+            "def LOSS_FUNCTION(outputs, targets):\n"
+            "    return _cross_entropy(outputs.transpose(1, 2), targets)"
+        )
     if task == "generate":
         return (
             "_cross_entropy = nn.CrossEntropyLoss(ignore_index=0)  # token 0 is padding\n\n\n"
@@ -1451,12 +1582,16 @@ def _train_py(graph: GraphIn, analysis: Analysis) -> str:
     dial = training_settings(graph)
     task = analysis.head.brick.id
     is_classify = task == "classify"
+    writer = writer_of(analysis)
+    learning_rate = dial["learning_rate"]
+    if writer and "learning_rate" not in (graph.trainingOverride or {}):
+        learning_rate = f"{WRITER_LEARNING_RATE}  # small, so the writer keeps what it already knows"
     return _fill(
         _TRAIN,
         DIAL=dial["name"],
         EPOCHS=dial["epochs"],
         BATCH=dial["batch_size"],
-        LR=dial["learning_rate"],
+        LR=learning_rate,
         LOSS_DEF=_loss_def(analysis),
         CALL="model(*inputs)" if analysis.target else "model(inputs)",
         TO_DEVICE=(
@@ -1467,6 +1602,10 @@ def _train_py(graph: GraphIn, analysis: Analysis) -> str:
         EVAL_EXTRA="            correct += (outputs.argmax(dim=1) == targets).sum().item()" if is_classify else "",
         EPOCH_EXTRA="  check accuracy {accuracy:.1%}" if is_classify else "",
         AFTER=_ANOMALY_AFTER if task == "detect_anomalies" else "",
+        SAVE_STATE=(
+            "{name: p.detach().cpu().clone() for name, p in model.named_parameters() if p.requires_grad}  # only the adjusted layers"
+            if writer else "{k: v.cpu().clone() for k, v in model.state_dict().items()}"
+        ),
     )
 
 
@@ -1479,6 +1618,14 @@ def _data_description(analysis: Analysis) -> list[str]:
             return [
                 "A CSV file with the columns source and target, one pair per row.",
                 f"Inputs are cut to {s.steps} tokens and outputs to {analysis.target.output.steps} tokens.",
+            ]
+        writer = writer_of(analysis)
+        if writer:
+            spec = WRITERS[writer.params["model"]]
+            return [
+                "A plain text file containing all your training text.",
+                f"{writer.params['model']} reads {s.steps} tokens at a time with its own tokenizer and learns to predict the next one.",
+                f"It downloads once from Hugging Face ({spec['download']}), then runs on this computer.",
             ]
         if task == "generate":
             return [
@@ -1528,6 +1675,17 @@ def _readme(graph: GraphIn, analysis: Analysis) -> str:
     generate_row = "| `generate.py` | Produces text from the trained model |\n" if analysis.head.brick.id == "generate" else ""
     predict_row = ""
     predict_note = ""
+    if writer_of(analysis):
+        note = (
+            "\nThe first run downloads the pretrained writer. After that it works offline. "
+            "Training changes only the writer's last few layers, so `model.pt` stays small and holds just those.\n"
+        )
+        predict_note = (
+            "\n## How to use it\n\n"
+            '- `python generate.py "Once upon a time"` continues your opening words in the style it learned.\n'
+            '- `python generate.py --chat "Suggest a name for a bakery"` asks it something, like a chat.\n'
+            "- Both work before training too, using the writer as it was downloaded.\n"
+        )
     if trainable_categories(analysis):
         predict_row = (
             "| `predict.py` | Asks the trained model about one image |\n"
@@ -1597,7 +1755,9 @@ def _requirements(analysis: Analysis) -> str:
     lines = ["torch>=2.2"]
     if analysis.socket.output.kind == IMAGE:
         lines += ["torchvision>=0.17", "pillow>=10"]
-    if any(s.brick.id == "pretrained_language" for s in analysis.steps):
+    if writer_of(analysis):
+        lines.append("transformers>=4.56")
+    elif any(s.brick.id == "pretrained_language" for s in analysis.steps):
         lines.append("transformers>=4.40")
     if trainable_categories(analysis):
         lines += ["fastapi>=0.115", "uvicorn>=0.30"]

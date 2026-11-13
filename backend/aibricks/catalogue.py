@@ -89,6 +89,19 @@ BLOCKS = Param("layers", "Layers", "int", 2, "Stacked transformer layers.", 1, 1
 FREEZE = Param("freeze", "Keep its weights fixed", "bool", True, "Train only the layers you added. Recommended for small datasets.")
 HORIZON = Param("horizon", "Steps to forecast", "int", 24, "How many future steps to predict.", 1, 1024)
 
+# Small open models that write text. Each downloads once from Hugging Face, then runs on this computer.
+# "hidden" and "vocab" set the sizes the bricks after it receive; "layers" is how many it has in total.
+WRITERS = {
+    "SmolLM2 135M": {"repo": "HuggingFaceTB/SmolLM2-135M-Instruct", "hidden": 576, "heads": 9, "kv_heads": 3, "ffn": 1536,
+                     "vocab": 49152, "layers": 30, "download": "270 MB"},
+    "SmolLM2 360M": {"repo": "HuggingFaceTB/SmolLM2-360M-Instruct", "hidden": 960, "heads": 15, "kv_heads": 5, "ffn": 2560,
+                     "vocab": 49152, "layers": 32, "download": "720 MB"},
+    "Granite 4.0 350M": {"repo": "ibm-granite/granite-4.0-350m", "hidden": 1024, "heads": 16, "kv_heads": 4, "ffn": 2048,
+                         "vocab": 100352, "layers": 28, "download": "700 MB"},
+    "Qwen2.5 0.5B": {"repo": "Qwen/Qwen2.5-0.5B-Instruct", "hidden": 896, "heads": 14, "kv_heads": 2, "ffn": 4864,
+                     "vocab": 151936, "layers": 24, "download": "990 MB"},
+}
+
 _BRICKS = [
     # Data sockets
     Brick("image_folder", "Image folder", "socket", "Folder of images, loaded and resized for the model.", output=IMAGE, params=(
@@ -165,6 +178,15 @@ _BRICKS = [
     Brick("transformer_decoder", "Transformer decoder", "transformer", "Generates a sequence one token at a time, seeing only earlier tokens. Connect an encoder for translation.",
           (Port("in", (SERIES,), "Tokens"), Port("memory", (SERIES,), "Encoder (optional)", optional=True)), SERIES, (HEADS, BLOCKS)),
     Brick("pretrained_language", "Pretrained language model", "transformer", "DistilBERT, already trained on English text. Uses its own tokenizer.", _in(TEXT), SERIES, (FREEZE,)),
+    Brick("pretrained_writer", "Pretrained writer", "transformer",
+          "A small open model that already writes and chats, such as SmolLM2 or IBM Granite. It downloads once, then runs on this computer. "
+          "Connect Generate text after it.", _in(TEXT), SERIES, (
+        Param("model", "Model", "choice", "SmolLM2 135M",
+              "Smaller models train faster and need less memory. Bigger ones write better. "
+              + " ".join(f"{name}: {spec['download']}." for name, spec in WRITERS.items()), choices=tuple(WRITERS)),
+        Param("adjust_layers", "Layers it adjusts", "int", 2,
+              "Training changes only its last few layers, so it keeps what it already knows and trains quickly. More layers learn your style more closely.", 1, 24),
+    )),
     Brick("pretrained_vision", "Pretrained vision transformer", "transformer", "ViT-B/16, already trained on photos. Needs 224×224 colour images.", _in(IMAGE), SUMMARY, (FREEZE,)),
     # Connectors
     Brick("embedding", "Embedding", "connector", "Turns each token number into a learned vector.", _in(TEXT), SERIES, (
@@ -308,6 +330,24 @@ KITS = [
         ],
     },
     {
+        "id": "writer_tuner",
+        "domain": "Language",
+        "name": "Pretrained writer",
+        "family": "Pretrained language model",
+        "audience": "A small open model such as SmolLM2 or IBM Granite, adjusted to write like your text. Runs on this computer.",
+        "projectName": "My writer",
+        "training": "quick",
+        "nodes": [
+            _node("socket", "text_input", 0, 0, max_length=128),
+            _node("writer", "pretrained_writer", 0, 150),
+        ],
+        "edges": [_edge("socket", "writer")],
+        "steps": [
+            {"text": "Add Generate text and connect it to the Pretrained writer output.", "check": {"brick": "generate"}},
+            {"text": "Run the test.", "check": {"testPassed": True}},
+        ],
+    },
+    {
         "id": "translator",
         "domain": "Language",
         "name": "Translator",
@@ -376,6 +416,7 @@ WHEN_TO_USE = {
     "lstm_decoder": "Rebuilds or extends a sequence, for forecasting or spotting unusual readings.",
     "pretrained_language": "Reuses a model that already understands English. A good choice when you have little text.",
     "transformer_decoder": "Writes text one word at a time.",
+    "pretrained_writer": "Starts from a model that can already write and chat, then adjusts it to your text. Better than starting from scratch.",
     "embedding": "Turns words into numbers the model can work with.",
     "positional": "Tells the model what order the words came in.",
     "global_pool": "Connects image layers to a task head. Use it just before the task head.",
@@ -387,13 +428,14 @@ WHEN_TO_USE = {
     "detect_anomalies": "Use this to flag anything that looks different from normal.",
     "generate": "Use this to write new text in the style of your training text.",
 }
-BASIC_PARAMS = {"image_size", "channels", "augment", "vary_flip", "vary_crop", "vary_rotate", "vary_light", "vary_auto", "columns", "sequence_length", "classes", "horizon", "max_length", "steps"}
+BASIC_PARAMS = {"image_size", "channels", "augment", "vary_flip", "vary_crop", "vary_rotate", "vary_light", "vary_auto", "columns", "sequence_length", "classes", "horizon", "max_length", "steps", "model"}
 GOALS = {
     "defect_detector": "Sort photos into categories",
     "energy_forecaster": "Predict future values from past measurements",
     "sensor_watchdog": "Spot unusual sensor readings",
     "ticket_sorter": "Sort written text into categories",
     "text_generator": "Write new text in the style of my text",
+    "writer_tuner": "Adjust a model that can already write and chat",
     "translator": "Translate or summarise text",
     "vit_classifier": "Sort photos using a powerful pretrained model",
 }

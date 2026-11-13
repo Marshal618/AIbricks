@@ -308,6 +308,16 @@ works out every shape, then **Test** runs the design on sample data, and **Train
 of your photo datasets. **Code** shows the PyTorch it turns into, and **Export** downloads it as a
 readable project. Designs for other kinds of data train from the downloaded project.
 
+**Pretrained writer** starts from a small open model that can already write and chat, and adjusts it
+to write like your text. Choose SmolLM2 135M or 360M (Hugging Face), Granite 4.0 350M (IBM) or
+Qwen2.5 0.5B (Alibaba). The download is 270 MB to 990 MB, and only once. After that it runs on your
+computer with no internet and no AI service. Training changes only its last few layers, so it keeps
+what it already knows and the saved model is small. Start from the **Pretrained writer** template and
+add **Generate text**. Then export it, put your text in `data/corpus.txt` and run `python train.py`.
+`python generate.py "Once upon a time"` continues your words, and `python generate.py --chat "..."`
+asks it something. Both also work before training. These are small models, so expect simple answers
+and the odd mistake, not ChatGPT.
+
 **Convert to blocks**, in Advanced mode, rebuilds the canvas from an edited `model.py`. The code is
 read with Python's `ast` module and never run. It must use AI Bricks blocks, so custom Python belongs
 in the exported project.

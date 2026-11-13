@@ -45,6 +45,8 @@ COMPONENTS: dict[str, Component] = {
     "TransformerDecoderOnly": Component("transformer_decoder", ("size", "heads", "layers"), {"heads": "heads", "layers": "layers"}, "TransformerDecoderOnly(size, heads=4, layers=2)"),
     "TransformerDecoder": Component("transformer_decoder", ("size", "heads", "layers", "memory_size"), {"heads": "heads", "layers": "layers"}, "TransformerDecoder(size, heads=4, layers=2, memory_size=128)"),
     "PretrainedLanguageModel": Component("pretrained_language", _FREEZE, {"freeze": "freeze"}, "PretrainedLanguageModel(pretrained=use_pretrained_weights, freeze=True)"),
+    "PretrainedWriter": Component("pretrained_writer", ("name", "adjust_layers", "pretrained"), {"name": "model", "adjust_layers": "adjust_layers"},
+                                  'PretrainedWriter("SmolLM2 135M", adjust_layers=2, pretrained=use_pretrained_weights)'),
     "PretrainedVisionTransformer": Component("pretrained_vision", _FREEZE, {"freeze": "freeze"}, "PretrainedVisionTransformer(pretrained=use_pretrained_weights, freeze=True)"),
     "GlobalPool": Component("global_pool", (), {}, "GlobalPool()"),
     "Flatten": Component("flatten", (), {}, "Flatten()"),
@@ -60,6 +62,7 @@ COMPONENTS: dict[str, Component] = {
     "RebuildImageHead": Component("detect_anomalies", ("in_channels", "out_channels"), {}, "RebuildImageHead(in_channels, out_channels)"),
     "RebuildSeriesHead": Component("detect_anomalies", ("in_features", "out_features"), {}, "RebuildSeriesHead(in_features, out_features)"),
     "GenerateHead": Component("generate", ("in_features", "vocab_size"), {}, "GenerateHead(in_features, vocab_size=8000)"),
+    "PretrainedWriterHead": Component("generate", ("writer",), {}, "PretrainedWriterHead(self.writer)"),
 }
 
 ALLOWED_IMPORTS = {"torch", "bricks", "torch.nn"}
