@@ -288,7 +288,12 @@ def _freeze_text(dataset: str, names: list[str], items: Items, run: Path) -> Non
         writer.writerows((texts[item_id], label) for item_id, label in items if label in wanted)
 
 
-def freeze(dataset: str, names: list[str], run: Path) -> int:
+def freeze_corpus(dataset: str, names: list[str], run: Path) -> int:
+    """For a writer: every piece of text in the version, labelled or not, one per line, in order."""
+    return freeze(dataset, [], run, corpus=True)
+
+
+def freeze(dataset: str, names: list[str], run: Path, corpus: bool = False) -> int:
     """Makes sure a version matches the dataset, and copies its examples for one training run."""
     with training._lock:
         meta = datasets._read(dataset)
@@ -301,6 +306,12 @@ def freeze(dataset: str, names: list[str], run: Path) -> int:
         if meta["kind"] == "table":
             (run / "data").mkdir(parents=True, exist_ok=True)
             _link(_table_copy(dataset, version["number"]), run / "data" / "table.csv")
+        elif meta["kind"] == "text" and corpus:
+            with closing(_texts(dataset)) as store:
+                texts = dict(store.execute("SELECT id, text FROM texts"))
+            (run / "data").mkdir(parents=True, exist_ok=True)
+            with open(run / "data" / "corpus.txt", "w", encoding="utf-8") as file:
+                file.writelines(" ".join(texts[item_id].split()) + "\n" for item_id, _ in items)
         elif meta["kind"] == "text":
             _freeze_text(dataset, names, items, run)
         elif meta.get("goal") in ("find", "outline"):

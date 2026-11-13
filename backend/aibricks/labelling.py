@@ -341,9 +341,24 @@ def _read_texts(data: bytes, kind: str) -> tuple[list[str], str | None]:
         raise TrainingError(422, "This CSV file couldn't be read.") from None
 
 
+def _split_long(texts: list[str]) -> list[str]:
+    """For a writer, long paragraphs are kept by cutting them at a sentence end, rather than skipped."""
+    pieces = []
+    for text in texts:
+        while len(text) > MAX_TEXT_LENGTH:
+            cut = max(text.rfind(". ", 0, MAX_TEXT_LENGTH), text.rfind(" ", 0, MAX_TEXT_LENGTH // 2))
+            cut = cut + 1 if cut > 0 else MAX_TEXT_LENGTH
+            pieces.append(text[:cut].strip())
+            text = text[cut:].strip()
+        pieces.append(text)
+    return pieces
+
+
 def add_text(data: bytes, kind: str, dataset: str = training.DEFAULT_DATASET) -> dict:
     _require_kind(dataset, "text")
     texts, column = _read_texts(data, kind)
+    if dataset != training.DEFAULT_DATASET and _meta(dataset).get("goal") == "write":
+        texts = _split_long(texts)
     added = duplicates = too_long = 0
     with closing(_database(dataset)) as database, database:
         total = database.execute("SELECT COUNT(*) FROM items").fetchone()[0]

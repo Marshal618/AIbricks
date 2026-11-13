@@ -15,6 +15,7 @@ import { CompareModels, ModelCardView } from "./ModelInsights";
 import { WebcamTry } from "./Webcam";
 import { PreviewTable, TableResult, TableTrainer } from "./TableModels";
 import { ForecastResult, ForecastTrainer } from "./ForecastModels";
+import { WriterResult, WriterTrainer } from "./Writer";
 import type { DatasetPreview, DatasetSummary, GraphPayload, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
@@ -530,6 +531,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
   const newestPose = models?.find((model) => model.task === "pose" && model.status === "finished" && model.hasModel) ?? null;
   const newestOutline = models?.find((model) => model.task === "outline" && model.status === "finished" && model.hasModel) ?? null;
   const newestForecast = models?.find((model) => model.task === "forecast" && model.status === "finished" && model.hasModel) ?? null;
+  const newestWriter = models?.find((model) => model.task === "writer" && model.status === "finished" && model.hasModel) ?? null;
   const tableChoice = tableJob ?? (models?.find((model) => model.task === "table" || model.task === "forecast")?.task === "forecast" ? "forecast" : "predict");
 
   const remove = async (model: SavedModel) => {
@@ -562,7 +564,8 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
           </section>
         </div>
       )}
-      {dataset.kind === "text" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
+      {dataset.goal === "write" && <WriterTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStarted={load} onStop={(id) => void stop(id)} />}
+      {dataset.kind === "text" && dataset.goal !== "write" && <TextTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startText()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "sound" && <SoundTrainer dataset={dataset} beginner={beginner} running={running} busyElsewhere={busyElsewhere} onStart={() => void startSound()} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && (
         <fieldset className="table-job">
@@ -573,7 +576,8 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       )}
       {dataset.kind === "table" && tableChoice === "predict" && <TableTrainer dataset={dataset} beginner={beginner} running={running?.task === "table" ? running : null} busyElsewhere={busyElsewhere || running?.task === "forecast"} onStarted={load} onStop={(id) => void stop(id)} />}
       {dataset.kind === "table" && tableChoice === "forecast" && <ForecastTrainer dataset={dataset} beginner={beginner} running={running?.task === "forecast" ? running : null} busyElsewhere={busyElsewhere || running?.task === "table"} onStarted={load} onStop={(id) => void stop(id)} />}
-      {(newestForecast || newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose || newestOutline) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {(newestWriter || newestForecast || newestTable || newestPhoto || newestSound || newestText || newestUnusual || newestFind || newestPose || newestOutline) && <h2 className="section-title" id="newest-model">Your newest model</h2>}
+      {newestWriter && <WriterResult key={newestWriter.id} model={newestWriter} beginner={beginner} />}
       {newestPose && <PoseTry key={newestPose.id} model={newestPose} kind={newestPose.metrics?.points ?? dataset.points ?? "body"} beginner={beginner} />}
       {newestPose && <PoseResults key={`r-${newestPose.id}`} model={newestPose} dataset={dataset} beginner={beginner} onChanged={onChanged} />}
       {newestOutline && <OutlineTry key={newestOutline.id} model={newestOutline} beginner={beginner} />}
@@ -616,9 +620,11 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
       <h2 className="section-title">All models</h2>
       <section className="card">
         <h2>Models trained on this data</h2>
-        <p className="muted small">The score is how often it was right on held-back {dataset.kind === "table" ? "rows" : "examples"} it never learned from.</p>
+        <p className="muted small">{dataset.goal === "write" ? "The score is how often it guessed the next word of held-back text it never learned from." : `The score is how often it was right on held-back ${dataset.kind === "table" ? "rows" : "examples"} it never learned from.`}</p>
         <Why>
-          {beginner
+          {dataset.goal === "write"
+            ? "Each writer also shows which version of the text trained it, and how the writer it started from did on the same held-back text."
+            : beginner
             ? "Each model also shows which version of the data trained it. Scores from small datasets are rough, so to see if one model is really better than another, compare them below."
             : "Splits are chosen by content fingerprint, so runs share most held-back examples; use Compare for a paired test. The 10 newest model files are kept."}
         </Why>
@@ -632,7 +638,9 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
                 <span className="muted small">
                   {model.datasetVersion !== null ? `Data v${model.datasetVersion}${known.has(model.datasetVersion) ? "" : " (deleted)"}` : "No data version"}
                   {" · "}{when(model.startedAt)}
-                  {model.metrics?.task === "forecast"
+                  {model.metrics?.task === "writer"
+                    ? ` · guessed the next word ${Math.round((model.metrics.accuracyAfter ?? 0) * 100)}% of the time; ${model.metrics.model} as downloaded ${Math.round((model.metrics.accuracyBefore ?? 0) * 100)}%`
+                    : model.metrics?.task === "forecast"
                     ? ` · typical error up to ${model.metrics.horizon} ${model.metrics.stepName}${model.metrics.horizon === 1 ? "" : "s"} ahead; the same as last time would be off by ${(model.metrics.maeLast ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                     : model.metrics?.task === "number"
                     ? ` · typical error; always guessing the average would be off by ${(model.metrics.baselineMae ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
@@ -652,7 +660,7 @@ export function DatasetModels({ dataset, beginner, onBuild, onChanged, onOpenDes
         </ul>
       </section>
       {cardForModel && <ModelCardView key={`card-${cardForModel.id}`} model={cardForModel} onClose={() => setCardFor(null)} />}
-      {models && <CompareModels datasetId={dataset.id} models={models} beginner={beginner} />}
+      {models && dataset.goal !== "write" && <CompareModels datasetId={dataset.id} models={models} beginner={beginner} />}
     </>
   );
 }

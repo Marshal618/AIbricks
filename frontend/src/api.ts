@@ -1,4 +1,4 @@
-import type { ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { ChatTurn, WriterAnalysis, ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -395,6 +395,15 @@ export async function trainForecastModel(id: string, choice: { when: string; val
 export const fetchForecast = (job: string): Promise<ForecastDetails> => getJson(`/api/models/${job}/forecast`);
 
 export const forecastFrom = (job: string, values: number[]): Promise<{ values: number[]; low: number[]; high: number[] }> => sendJson(`/api/models/${job}/forecast-from`, { values });
+
+export const fetchWriterAnalysis = (id: string): Promise<WriterAnalysis> => getJson(`/api/datasets/${id}/writer/analysis`);
+
+export async function trainWriter(id: string, choice: { model: string; strength: "light" | "more"; length: "quick" | "balanced" | "thorough" }): Promise<void> {
+  await sendJson(`/api/datasets/${id}/train-writer`, choice);
+}
+
+export const writeWith = (job: string, request: { prompt: string; chat: boolean; history: ChatTurn[]; compare: boolean; seed: number }): Promise<{ adjusted: string; original?: string }> =>
+  sendJson(`/api/models/${job}/write`, request);
 
 export const fetchHealth = (id: string): Promise<DataHealth> => getJson(`/api/datasets/${id}/health`);
 

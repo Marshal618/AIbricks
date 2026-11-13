@@ -24,7 +24,8 @@ class DatasetIn(BaseModel):
     categories: list[str] = Field(default_factory=list, max_length=MAX_CATEGORIES)
     # Photos only: sort into categories, learn what normal looks like and spot what's unusual,
     # find things in photos by drawing boxes around them, outline them, or sort body poses or hand signs.
-    goal: str = Field(default="sort", pattern="^(sort|unusual|find|pose|outline)$")
+    # Text only: sort it into categories, or teach a writer to write like it.
+    goal: str = Field(default="sort", pattern="^(sort|unusual|find|pose|outline|write)$")
     # Sorting poses only: the points of a whole body, or of hands.
     points: str = Field(default="body", pattern="^(body|hands)$")
 
@@ -94,6 +95,10 @@ def _summary(meta: dict) -> dict:
         from . import finder  # Imported here, because finder imports this module.
         amounts, done, unsorted = finder.counts(meta)
         return {"description": "", "licence": ""} | meta | {"counts": amounts, "labelled": done, "unsorted": unsorted}
+    if meta.get("goal") == "write":
+        from . import writer  # Imported here, because writer imports this module.
+        pieces, words = writer.amounts(dataset)
+        return {"description": "", "licence": ""} | meta | {"counts": {}, "labelled": pieces, "unsorted": 0, "words": words}
     if meta["kind"] == "image":
         amounts, unsorted = training.counts(names, dataset), labelling.queue(dataset)["total"]
     elif meta["kind"] == "sound":
@@ -119,6 +124,10 @@ def create(request: DatasetIn) -> dict:
         raise TrainingError(422, "Outlining things works with photos.")
     if request.goal == "pose" and request.kind != "image":
         raise TrainingError(422, "Sorting poses works with photos.")
+    if request.goal == "write" and request.kind != "text":
+        raise TrainingError(422, "Teaching a writer works with text.")
+    if request.goal == "write" and request.categories:
+        raise TrainingError(422, "A writer learns from all the text, so it doesn't use categories.")
     unusual = request.goal == "unusual"
     meta = {
         "id": uuid.uuid4().hex[:12], "name": name, "kind": request.kind,
@@ -208,6 +217,8 @@ def preview_image(dataset: str, category: str, image_id: str):
 def _fixed(meta: dict) -> None:
     if meta.get("goal") == "unusual":
         raise TrainingError(422, "This dataset always has two categories: Normal and Unusual.")
+    if meta.get("goal") == "write":
+        raise TrainingError(422, "A writer learns from all the text, so it doesn't use categories.")
 
 
 def add_categories(dataset: str, names: list[str]) -> dict:
