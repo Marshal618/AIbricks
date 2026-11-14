@@ -79,6 +79,7 @@ function ModelHelp({ assist, items, categories, counts, things, trainHint, onSug
               ? `The newest model was trained with different categories. ${trainHint} again, and it can suggest labels.`
               : `Label about 20 ${things} per category, then ${trainHint.toLowerCase()}. It can then suggest the rest, and you only confirm or correct them.${smallest >= 20 ? "" : " It isn't ready yet."}`}
       </p>
+      {!suggested && assist.coachOrder && <p className="small field-note">For now, the data coach has put the most useful {things} first, so each one you label teaches the most.</p>}
       {assist.suggestError && <p className="small tone-bad field-note">{assist.suggestError}</p>}
       {!sameCategories && smallest >= 20 && categories.length > 0 && onBuild && <button className="button button-small field-note" onClick={onBuild}>Build a model with this data</button>}
     </section>

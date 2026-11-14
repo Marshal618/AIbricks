@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer, namefinder
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer, namefinder, coach
 
 
 @contextlib.asynccontextmanager
@@ -736,6 +736,17 @@ def save_boxes(dataset_id: str, image_id: str, request: BoxesIn) -> dict:
 def clear_boxes(dataset_id: str, image_id: str) -> dict:
     _dataset_reply(finder.clear_boxes, dataset_id, image_id)
     return {"ok": True}
+
+
+@app.get("/api/datasets/{dataset_id}/coach")
+def data_coach(dataset_id: str) -> dict:
+    """How much more data would help, and which examples to label next, from the coach's last run."""
+    return _dataset_reply(coach.overview, dataset_id)
+
+
+@app.post("/api/datasets/{dataset_id}/coach", dependencies=[Depends(_needs_json)])
+def start_data_coach(dataset_id: str) -> dict:
+    return {"job": _dataset_reply(coach.start, dataset_id)}
 
 
 class WordsIn(BaseModel):

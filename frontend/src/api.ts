@@ -1,4 +1,4 @@
-import type { ChatTurn, WriterAnalysis, ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { ChatTurn, DataCoach, WriterAnalysis, ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -563,3 +563,9 @@ export async function findBoxes(job: string, file: Blob): Promise<FoundBoxes> {
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
 }
+
+// ------------------------------------------------------------- the data coach
+
+export const fetchCoach = (dataset: string): Promise<DataCoach> => getJson(`/api/datasets/${dataset}/coach`);
+
+export const startCoach = (dataset: string): Promise<{ job: DataCoach["job"] }> => sendJson(`/api/datasets/${dataset}/coach`);

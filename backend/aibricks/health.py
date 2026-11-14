@@ -239,6 +239,9 @@ def start(dataset: str) -> dict:
     with _lock, training._lock:
         if is_checking():
             raise TrainingError(409, "A label check is already running.")
+        from . import coach  # imported here, because coach imports this module
+        if coach.is_running():
+            raise TrainingError(409, "Wait for the data coach to finish.")
         if training.is_running():
             raise TrainingError(409, "Wait for training to finish. Both need this computer's full attention.")
         job = opendata.status(dataset)["job"]

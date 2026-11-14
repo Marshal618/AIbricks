@@ -314,6 +314,8 @@ export interface LabelAssist {
   suggestError: string | null;
   /** The categories of the model that makes suggestions, or null when there's no such model yet. */
   modelCategories: string[] | null;
+  /** True when the queue is in the data coach's order, most useful first. */
+  coachOrder?: boolean;
 }
 
 export interface ImageQueue extends LabelAssist {
@@ -788,4 +790,33 @@ export interface WriterAnalysis {
 export interface ChatTurn {
   role: "user" | "assistant";
   content: string;
+}
+
+/** One point on the data coach's learning curve: the stand-in model's accuracy with this many labelled examples. */
+export interface CoachPoint {
+  examples: number;
+  accuracy: number;
+  low?: number;
+  high?: number;
+}
+
+export interface CoachResult {
+  ranAt: number;
+  labelled: number;
+  curve: { measured: CoachPoint[]; now: CoachPoint; more: CoachPoint[]; levelsOffAt: number; fitted: CoachPoint[] } | null;
+  categories: { category: string; count: number; accuracy: number | null; gainIfDoubled: number | null }[];
+  next: { id: string; guess: string; chance: number; unsure: number; text?: string }[];
+  unlabelledRanked: number;
+  stale: boolean;
+  verdict: "helps" | "some" | "levelling" | "unknown";
+  gain: number | null;
+  focus: string[];
+  rough: boolean;
+}
+
+export interface DataCoach {
+  job: { status: "running" | "finished" | "failed"; stepsDone: number; stepsTotal: number; error: string | null } | null;
+  labelledNow: number;
+  minPerCategory: number;
+  result: CoachResult | null;
 }

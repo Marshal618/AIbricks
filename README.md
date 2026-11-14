@@ -122,6 +122,27 @@ flags were real errors. Spreadsheet datasets show table statistics instead, such
 and blank cells. The label check isn't available for sound or poses yet, so those datasets reach
 level 2 at most.
 
+### How much more data?
+
+On a photo or text dataset that sorts into categories, the **Check** tab has a data coach. Choose
+**Ask the coach** once there are at least 5 labelled examples in each of 2 categories. It answers two
+questions:
+
+- **Would more data help, and how much?** It trains a quick stand-in model (the same pretrained
+  model and simple classifier as the label check) on 10% up to all of your labels, always testing on
+  examples it didn't learn from. Accuracy usually improves along a smooth curve as data grows, so it
+  fits that curve and follows it forward: for example, "about 77% now, about 85% with twice as many,
+  likely 81% to 88%". It says whether more data should help a lot, a little, or is levelling off, which
+  categories would gain most, and, if it's levelling off, what to try instead. The model you design may
+  score higher or lower than the stand-in, but tends to improve in a similar way.
+- **What should I label next?** It ranks your unlabelled examples by how unsure the stand-in is about
+  them, while keeping the picks different from each other and from what's labelled. The Label tab then
+  shows them first, until you have a trained model that makes its own suggestions.
+
+In our tests on handwritten digits, its estimates for twice and four times the data were within about
+1 point on average (a few points either way for a single dataset), and the real result fell inside
+its range. Labelling its picks reached the same accuracy as random picking with about 40% fewer labels.
+
 ### Versions
 
 **History** saves versions of your data and labels, so you can compare or restore them. Training
@@ -483,7 +504,7 @@ pretrained models into `backend/.test-cache/`.
   test in a separate, time-limited process; `projects.py` stores saved designs.
 - Data: `datasets.py` stores datasets and categories; `labelling.py` stores unsorted photos and text
   and makes label suggestions; `versions.py` keeps versions; `opendata.py` imports open datasets;
-  `health.py` and `health_check.py` give levels and run the label check.
+  `health.py` and `health_check.py` give levels and run the label check. `coach.py` and `coach_check.py` run the data coach.
 - Training: `training.py` runs training and predictions in separate processes; `experiments.py` runs
   Find a better model; `augment.py` varies training photos; `checkup.py` makes the training check.
 - Kinds of model: `finder.py` finds things in photos, with `namefinder.py` (OWLv2) suggesting boxes from names; `outline.py` outlines things, with MobileSAM

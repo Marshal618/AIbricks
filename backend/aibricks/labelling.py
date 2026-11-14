@@ -135,10 +135,19 @@ def queue(dataset: str = training.DEFAULT_DATASET) -> dict:
     answers = _suggestions(dataset, _suggestions_file(dataset), job)
     folder = inbox(dataset)
     ids = _first_least_sure(sorted(path.name for path in folder.iterdir() if _IMAGE_ID.match(path.name)) if folder.is_dir() else [], answers)
+    ranked = _coach_order(dataset) if not answers else None
+    if ranked:
+        ids.sort(key=lambda item: ranked.get(item, len(ranked)))
     return {
         "items": [{"id": image_id, "suggestion": answers.get(image_id)} for image_id in ids[:MAX_QUEUE]],
-        "total": len(ids),
+        "total": len(ids), "coachOrder": bool(ranked),
     } | _assist(job, answers, ids)
+
+
+def _coach_order(dataset: str) -> dict[str, int] | None:
+    """The data coach's ranking, most useful first, used while no trained model makes suggestions."""
+    from . import coach  # imported here, because coach imports this module
+    return coach.order(dataset)
 
 
 def image_file(image_id: str, dataset: str = training.DEFAULT_DATASET) -> Path:
@@ -406,6 +415,12 @@ def text_queue(categories: list[str], dataset: str = training.DEFAULT_DATASET, a
             texts = texts_by_id(ids[:MAX_QUEUE], dataset)
             rows = [(item_id, texts[item_id]["text"]) for item_id in ids[:MAX_QUEUE] if item_id in texts]
             total = len(ids)
+        elif ranked := _coach_order(dataset):
+            ids = sorted((row[0] for row in database.execute("SELECT id FROM items WHERE label IS NULL AND removed = 0 ORDER BY seq")),
+                         key=lambda item: ranked.get(item, len(ranked)))
+            texts = texts_by_id(ids[:MAX_QUEUE], dataset)
+            rows = [(item_id, texts[item_id]["text"]) for item_id in ids[:MAX_QUEUE] if item_id in texts]
+            total = len(ids)
         else:
             rows = database.execute(
                 "SELECT id, text FROM items WHERE label IS NULL AND removed = 0 ORDER BY seq LIMIT ?", (MAX_QUEUE,)
@@ -414,12 +429,12 @@ def text_queue(categories: list[str], dataset: str = training.DEFAULT_DATASET, a
             ids = None
     reply = {
         "items": [{"id": item_id, "text": text, "suggestion": answers.get(item_id)} for item_id, text in rows],
-        "total": total,
+        "total": total, "coachOrder": not answers and _coach_order(dataset) is not None,
         "counts": {name: counts.get(name, 0) for name in categories},
         "otherLabels": sum(amount for name, amount in counts.items() if name not in categories),
     }
     if assist:
-        if ids is None:
+        if ids is None or job is None:
             with closing(_database(dataset)) as database:
                 ids = [row[0] for row in database.execute("SELECT id FROM items WHERE label IS NULL AND removed = 0")] if job is not None else []
         reply |= _assist(job, answers, ids)
