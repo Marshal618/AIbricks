@@ -10,6 +10,8 @@ export const FIND_MINIMUM_BOXES = 5;
 export const FIND_SUGGESTED = 30;
 const UPLOAD_WORKERS = 4;
 const STRIP_LIMIT = 80;
+// How sure OWLv2 must be before its box is suggested. Its scores run lower than a trained model's.
+const NAME_SURE = 0.2;
 // Distinct colours for each thing. Every box also carries its thing's name, so colour is never the only clue.
 export const COLOURS = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#c2255c", "#0c8599", "#f08c00", "#5c7cfa", "#66a80f"];
 
@@ -171,7 +173,16 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
   const [drawing, setDrawing] = useState<{ x: number; y: number; x2: number; y2: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [helper, setHelper] = useState<string | null>(null);
-  const [helpOn, setHelpOn] = useState(true);
+  // Who draws the first boxes on a new photo: nobody, a model trained on this data, or OWLv2 from the things' names.
+  const [drawFirst, setDrawFirst] = useState<"off" | "model" | "name" | null>(null);
+  const [nameFinder, setNameFinder] = useState<api.NameFinderStatus | null>(null);
+  const [words, setWords] = useState<Record<string, string>>({});
+  const [savedWords, setSavedWords] = useState<Record<string, string>>({});
+  const [nameSure, setNameSure] = useState(NAME_SURE);
+  const [nameBoxes, setNameBoxes] = useState<Box[] | null>(null);
+  const [touched, setTouched] = useState(false);
+  const [looking, setLooking] = useState(false);
+  const lookRound = useRef(0);
   const stage = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (!categories.includes(thing)) setThing(categories[0] ?? ""); }, [categories, thing]);
@@ -193,18 +204,67 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
       .catch(() => setHelper(null));
   }, [datasetId, dataset.updatedAt]);
 
+  // What OWLv2 looks for for each thing, and whether it's downloaded yet.
+  useEffect(() => {
+    api.fetchFindWords(datasetId)
+      .then((reply) => { setWords(reply.words); setSavedWords(reply.words); setNameFinder(reply); })
+      .catch(() => setNameFinder(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, categories.join("\n")]);
+
+  // While it downloads, check every few seconds.
+  useEffect(() => {
+    if (!nameFinder?.downloading) return;
+    const timer = window.setInterval(() => { api.fetchNameFinder().then(setNameFinder).catch(() => undefined); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [nameFinder?.downloading]);
+
+  // A trained model is the better helper once there is one; until then, the names, if it's downloaded.
+  useEffect(() => {
+    if (drawFirst !== null || !nameFinder) return;
+    setDrawFirst(helper ? "model" : nameFinder.downloaded ? "name" : "off");
+  }, [drawFirst, helper, nameFinder]);
+
   const current = photos?.find((photo) => photo.id === currentId) ?? null;
+  const nameReady = drawFirst === "name" && !!nameFinder?.downloaded;
+
+  /** Asks OWLv2 for a photo's boxes, and shows those at least as sure as the slider. */
+  const lookByName = useCallback(async (photoId: string) => {
+    const round = ++lookRound.current;
+    setLooking(true);
+    setProblem(null);
+    try {
+      const found = (await api.findByName(datasetId, photoId)).boxes.filter((box) => categories.includes(box.category));
+      if (round !== lookRound.current) return;
+      setNameBoxes(found);
+      setTouched(false);
+      const shown = found.filter((box) => (box.chance ?? 1) >= nameSure);
+      setDraft(shown);
+      setSuggested(shown.length > 0);
+    } catch (error) {
+      if (round === lookRound.current) setProblem(message(error, "It couldn't look at this photo."));
+    } finally {
+      if (round === lookRound.current) setLooking(false);
+    }
+  }, [datasetId, categories, nameSure]);
+
   useEffect(() => {
     setSelected(null);
     setDrawing(null);
     setSuggested(false);
+    setNameBoxes(null);
+    setTouched(false);
+    lookRound.current += 1;
+    setLooking(false);
     if (!current) { setDraft([]); return; }
-    if (current.boxes !== null || !helper || !helpOn) { setDraft(current.boxes ?? []); return; }
+    const useModel = drawFirst === "model" && helper;
+    if (current.boxes !== null || !(useModel || nameReady)) { setDraft(current.boxes ?? []); return; }
     setDraft([]);
+    if (nameReady) { void lookByName(current.id); return; }
     let live = true;
     fetch(api.unsortedImageUrl(current.id, datasetId))
       .then((reply) => reply.blob())
-      .then((blob) => api.findBoxes(helper, blob))
+      .then((blob) => api.findBoxes(helper!, blob))
       .then((found) => {
         if (!live) return;
         const usable = found.boxes.filter((box) => categories.includes(box.category));
@@ -215,7 +275,44 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
     return () => { live = false; };
   // Only a change of photo, or of the helper, should redraw the suggestions.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current?.id, current?.boxes, helper, helpOn, datasetId]);
+  }, [current?.id, current?.boxes, helper, drawFirst, nameReady, datasetId]);
+
+  // Moving the slider shows more or fewer of OWLv2's boxes, until you change them yourself.
+  useEffect(() => {
+    if (!nameBoxes || touched) return;
+    const shown = nameBoxes.filter((box) => (box.chance ?? 1) >= nameSure);
+    setDraft(shown);
+    setSuggested(shown.length > 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nameSure]);
+
+  const keepWords = async () => {
+    const changed = Object.fromEntries(Object.entries(words).filter(([name, text]) => text.trim() !== (savedWords[name] ?? "").trim()));
+    if (!Object.keys(changed).length) return;
+    try {
+      const reply = await api.saveFindWords(datasetId, changed);
+      setWords(reply.words);
+      setSavedWords(reply.words);
+      if (nameReady && current) void lookByName(current.id);
+    } catch (error) {
+      setProblem(message(error, "The words couldn't be saved."));
+    }
+  };
+
+  const download = async () => {
+    try {
+      setNameFinder(await api.downloadNameFinder());
+    } catch (error) {
+      setProblem(message(error, "The download couldn't start."));
+    }
+  };
+
+  // Once the download finishes, start using it.
+  const wasDownloading = useRef(false);
+  useEffect(() => {
+    if (wasDownloading.current && nameFinder?.downloaded && drawFirst === "off") setDrawFirst("name");
+    wasDownloading.current = !!nameFinder?.downloading;
+  }, [nameFinder, drawFirst]);
 
   const done = photos?.filter((photo) => photo.boxes !== null).length ?? 0;
   const total = photos?.length ?? 0;
@@ -275,12 +372,14 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
     if (box.w > 0.01 && box.h > 0.01) {
       setDraft((boxes) => [...boxes, box]);
       setSelected(draft.length);
+      setTouched(true);
     }
   };
 
   const removeBox = useCallback((index: number) => {
     setDraft((boxes) => boxes.filter((_, at) => at !== index));
     setSelected(null);
+    setTouched(true);
   }, []);
 
   // Keys: 1 to 9 pick a thing, Enter saves, Delete removes the chosen box.
@@ -291,7 +390,7 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
       if (/^[1-9]$/.test(event.key) && categories[Number(event.key) - 1]) {
         const name = categories[Number(event.key) - 1];
         setThing(name);
-        if (selected !== null) setDraft((boxes) => boxes.map((box, at) => at === selected ? { ...box, category: name } : box));
+        if (selected !== null) { setDraft((boxes) => boxes.map((box, at) => at === selected ? { ...box, category: name } : box)); setTouched(true); }
       } else if (event.key === "Enter" && current && !target.closest("button")) {
         event.preventDefault();
         void save(draft);
@@ -316,13 +415,72 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
       <section className="card find-labeller">
         <div className="card-head">
           <h2>{total ? `${done} of ${total} photos done` : "Draw boxes"}</h2>
-          {helper && (
-            <label className="check-row small">
-              <input type="checkbox" checked={helpOn} onChange={(event) => setHelpOn(event.target.checked)} />
-              Let the model draw first
-            </label>
-          )}
         </div>
+        {categories.length > 0 && drawFirst !== null && (
+          <div className="name-finder">
+            <fieldset className="chip-group">
+              <legend className="small">Draw the first boxes with</legend>
+              {([["off", "Nobody, I'll draw"], ...(helper ? [["model", "My trained model"]] : []), ["name", "Find by name"]] as [typeof drawFirst, string][]).map(([value, text]) => (
+                <label key={value} className={`chip${drawFirst === value ? " is-on" : ""}`}>
+                  <input type="radio" name="find-draw-first" checked={drawFirst === value} onChange={() => setDrawFirst(value)} />{text}
+                </label>
+              ))}
+            </fieldset>
+            {drawFirst === "name" && nameFinder && !nameFinder.downloaded && (
+              <div className="field-note">
+                <p className="small">
+                  A pretrained model, OWLv2, can draw the first boxes from the names of your things, so you only fix them.
+                  It downloads once, about {nameFinder.download}, then runs on this computer.
+                </p>
+                <div className="label-buttons field-note">
+                  <button className="button button-primary" onClick={() => void download()} disabled={nameFinder.downloading}>
+                    {nameFinder.downloading ? "Downloading…" : `Download it (${nameFinder.download})`}
+                  </button>
+                  {nameFinder.downloading && <span className="muted small" role="status">This can take a few minutes. You can keep drawing meanwhile.</span>}
+                </div>
+                {nameFinder.problem && <p className="small tone-bad" role="alert">{nameFinder.problem}</p>}
+              </div>
+            )}
+            {nameReady && (
+              <div className="field-note">
+                <p className="small"><strong>Look for</strong></p>
+                <div className="name-words">
+                  {categories.map((name) => (
+                    <label key={name} className="name-word" style={{ ["--box" as string]: colourOf(categories, name) }}>
+                      <span className="find-swatch" aria-hidden="true" /><span className="name-word-thing">{name}</span>
+                      <input type="text" value={words[name] ?? name} maxLength={80} aria-label={`Words to look for for ${name}`}
+                        onChange={(event) => setWords((now) => ({ ...now, [name]: event.target.value }))}
+                        onBlur={() => void keepWords()}
+                        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+                    </label>
+                  ))}
+                </div>
+                <p className="muted small">
+                  Describe what each thing looks like in plain words, like “red mug”. Put other names after a comma, like “mug, cup”.
+                </p>
+                <label className="small name-sure-label" htmlFor="name-sure"><strong>How sure before it suggests a box</strong></label>
+                <div className="unusual-line">
+                  <span className="small muted">Suggests more</span>
+                  <input id="name-sure" type="range" min={0.05} max={0.6} step={0.05} value={nameSure} onChange={(event) => setNameSure(Number(event.target.value))} />
+                  <span className="small muted">Only the surest</span>
+                </div>
+                <div className="label-buttons">
+                  <span className="muted small" role="status">
+                    {looking ? "Looking at this photo…" : nameBoxes ? `${Math.round(nameSure * 100)}% · ${plural(nameBoxes.filter((box) => (box.chance ?? 1) >= nameSure).length, "box", "boxes")} suggested` : `${Math.round(nameSure * 100)}%`}
+                  </span>
+                  {current && <button className="button button-small" onClick={() => void lookByName(current.id)} disabled={looking}>Look again</button>}
+                </div>
+                {beginner && (
+                  <Why>
+                    OWLv2 has learned what many everyday things look like from photos and their captions, so it can find things
+                    from words alone. It's too big and slow for web apps and small computers, though. Use it to box your photos
+                    quickly, check every box, then train your own detector below, which learns from the boxes you saved.
+                  </Why>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {!categories.length && <p className="muted small">Name the things to find above first.</p>}
         {categories.length > 0 && total === 0 && <p className="muted small">Add some photos above, then draw a box around each thing in them.</p>}
         {categories.length > 0 && current && (
@@ -336,7 +494,7 @@ export function FindLabels({ dataset, beginner, onChanged }: { dataset: DatasetS
                 <label key={name} className={`chip find-chip${thing === name ? " is-on" : ""}`} style={{ ["--box" as string]: colourOf(categories, name) }}>
                   <input type="radio" name="find-thing" checked={thing === name} onChange={() => {
                     setThing(name);
-                    if (selected !== null) setDraft((boxes) => boxes.map((box, at) => at === selected ? { ...box, category: name } : box));
+                    if (selected !== null) { setDraft((boxes) => boxes.map((box, at) => at === selected ? { ...box, category: name } : box)); setTouched(true); }
                   }} />
                   <span className="find-swatch" aria-hidden="true" />{name}{index < 9 && <kbd>{index + 1}</kbd>}
                 </label>

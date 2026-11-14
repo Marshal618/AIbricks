@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer, namefinder
 
 
 @contextlib.asynccontextmanager
@@ -736,6 +736,38 @@ def save_boxes(dataset_id: str, image_id: str, request: BoxesIn) -> dict:
 def clear_boxes(dataset_id: str, image_id: str) -> dict:
     _dataset_reply(finder.clear_boxes, dataset_id, image_id)
     return {"ok": True}
+
+
+class WordsIn(BaseModel):
+    words: dict[str, str] = Field(max_length=100)
+
+
+@app.get("/api/datasets/{dataset_id}/find-by-name")
+def find_by_name_words(dataset_id: str) -> dict:
+    """What the pretrained finder looks for for each thing, and whether it's downloaded."""
+    return _dataset_reply(namefinder.words, dataset_id)
+
+
+@app.put("/api/datasets/{dataset_id}/find-by-name")
+def set_find_by_name_words(dataset_id: str, request: WordsIn) -> dict:
+    return _dataset_reply(namefinder.set_words, dataset_id, request.words)
+
+
+@app.post("/api/find-by-name/download", dependencies=[Depends(_needs_json)])
+def download_name_finder() -> dict:
+    """Starts downloading OWLv2, the pretrained model that finds things from their names, once."""
+    return namefinder.start_download()
+
+
+@app.get("/api/find-by-name")
+def name_finder_status() -> dict:
+    return namefinder.status()
+
+
+@app.post("/api/datasets/{dataset_id}/find-by-name/{image_id}", dependencies=[Depends(_needs_json)])
+def find_by_name(dataset_id: str, image_id: str) -> dict:
+    """Suggested boxes for one photo, from each thing's words, found by OWLv2 on this computer."""
+    return _dataset_reply(namefinder.find, dataset_id, image_id)
 
 
 class ClicksIn(BaseModel):
