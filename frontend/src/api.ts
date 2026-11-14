@@ -525,6 +525,20 @@ export const fetchFindSettings = (job: string): Promise<{ sure: number; categori
 
 export const setFindSure = (job: string, sure: number): Promise<{ sure: number }> => putJson(`/api/models/${job}/find`, { sure });
 
+/** Whether OWLv2, the pretrained model that finds things from their names, is downloaded. */
+export interface NameFinderStatus { downloaded: boolean; downloading: boolean; problem: string | null; download: string }
+
+export const fetchNameFinder = (): Promise<NameFinderStatus> => getJson("/api/find-by-name");
+
+export const downloadNameFinder = (): Promise<NameFinderStatus> => sendJson("/api/find-by-name/download");
+
+export const fetchFindWords = (dataset: string): Promise<NameFinderStatus & { words: Record<string, string> }> => getJson(`/api/datasets/${dataset}/find-by-name`);
+
+export const saveFindWords = (dataset: string, words: Record<string, string>): Promise<NameFinderStatus & { words: Record<string, string> }> =>
+  putJson(`/api/datasets/${dataset}/find-by-name`, { words });
+
+export const findByName = (dataset: string, image: string): Promise<{ boxes: Box[] }> => sendJson(`/api/datasets/${dataset}/find-by-name/${image}`);
+
 // ------------------------------------------------------------- outlining things in photos
 
 export interface Click { x: number; y: number; inside: boolean }

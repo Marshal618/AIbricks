@@ -797,6 +797,13 @@ kbd { display: inline-block; min-width: 18px; padding: 0 4px; margin-right: 6px;
 .find-box-tag button { padding: 0 2px; border: 0; background: none; color: inherit; font-size: 14px; line-height: 14px; cursor: pointer; }
 .find-swatch { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; background: var(--box); }
 .find-chip kbd { margin: 0 0 0 6px; }
+.name-finder { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.name-finder .label-buttons { justify-content: space-between; align-items: center; margin-top: 6px; }
+.name-sure-label { display: block; margin-top: 10px; }
+.name-words { display: grid; gap: 6px; margin: 4px 0 6px; }
+.name-word { display: grid; grid-template-columns: auto minmax(70px, 140px) minmax(0, 1fr); align-items: center; font-size: 12px; }
+.name-word-thing { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; padding-right: 8px; }
+.name-word input { width: 100%; min-width: 0; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
 .find-actions { justify-content: flex-start; flex-wrap: wrap; align-items: center; }
 .find-actions kbd { margin: 0 0 0 6px; background: transparent; color: inherit; border-color: currentColor; opacity: 0.75; }
 .find-strip { display: flex; gap: 6px; margin: 0; padding: 0 0 6px; list-style: none; overflow-x: auto; }

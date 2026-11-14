@@ -169,8 +169,18 @@ make a score look far better than it is.
 
 Name the things to find, add photos, then drag a box around every one on **Add data**. Save with
 Enter; keys 1 to 9 pick the thing. Mark a photo with nothing in it as **Nothing to find here**, which
-teaches it what not to find. Once a model exists, **Let the model draw first** fills in its guesses
-as dashed boxes for you to fix.
+teaches it what not to find.
+
+You don't have to draw every box yourself. Under **Draw the first boxes with**, pick who draws
+first; their guesses appear as dashed boxes for you to fix, and only what you save counts:
+
+- **Find by name** uses OWLv2 (Minderer et al., 2023, Apache 2.0, from Google), a pretrained model
+  that finds things from words alone, so it works before you've trained anything. Under **Look for**,
+  describe each thing in plain words, like "red mug", with other names after a comma ("mug, cup").
+  A slider sets how sure it must be before it suggests a box. It downloads once, about 620 MB, and runs
+  on this computer, taking a second or two per photo. It's too big for web apps and Raspberry Pis, so
+  it only helps you label: the detector you train below learns from your saved boxes.
+- **My trained model** appears once you've trained one on this data, and fills in its own guesses.
 
 Before training, choose a detector. Both have a MobileNetV3 backbone pretrained on the COCO photos by
 torchvision, and both are fine-tuned on your boxes:
@@ -476,7 +486,7 @@ pretrained models into `backend/.test-cache/`.
   `health.py` and `health_check.py` give levels and run the label check.
 - Training: `training.py` runs training and predictions in separate processes; `experiments.py` runs
   Find a better model; `augment.py` varies training photos; `checkup.py` makes the training check.
-- Kinds of model: `finder.py` finds things in photos; `outline.py` outlines things, with MobileSAM
+- Kinds of model: `finder.py` finds things in photos, with `namefinder.py` (OWLv2) suggesting boxes from names; `outline.py` outlines things, with MobileSAM
   for click to outline; `anomaly.py` spots what's unusual; `poses.py`
   sorts poses and hand signs; `sounds.py` sorts sounds; `textmodels.py` sorts text; `tables.py`
   predicts from spreadsheets; `forecast.py` forecasts a column's next readings.

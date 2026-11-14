@@ -16,7 +16,7 @@ import os
 import uuid
 from pathlib import Path
 
-from . import codegen, datasets, labelling, training, versions
+from . import codegen, datasets, labelling, namefinder, training, versions
 from .training import TrainingError
 
 MIN_PHOTOS = 10
@@ -163,11 +163,13 @@ def rename_category(dataset: str, old: str, new: str) -> None:
             if box["category"] == old:
                 box["category"] = new
     write_boxes(dataset, saved)
+    namefinder.rename_category(dataset, old, new)
 
 
 def remove_category(dataset: str, name: str) -> None:
     saved = read_boxes(dataset)
     write_boxes(dataset, {photo: [box for box in found if box["category"] != name] for photo, found in saved.items()})
+    namefinder.remove_category(dataset, name)
 
 
 # --------------------------------------------------------------------- the project
