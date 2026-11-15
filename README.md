@@ -384,6 +384,14 @@ file and opened on another computer. Files contain the design only, not data or 
 - **Held-back examples.** Every run holds back about 20% of the data to check the model on. They're
   picked by a fingerprint of each example rather than at random, so models trained on the same
   dataset are checked on mostly the same examples, even after you add data.
+- **Sure sets.** When you try a photo, text, sound, pose or spreadsheet row, it also names a sure
+  set: every answer it can't rule out, such as "versicolor or virginica". Choose how often the set
+  should hold the right answer: 8 in 10, 9 in 10 or 19 in 20. Asking for more makes the sets bigger,
+  and a set naming every answer means its top guess isn't safe to trust. The cut-off comes from the
+  held-back examples (split conformal prediction, as explained by Angelopoulos and Bates, 2021), so it
+  needs enough of them: 4 for 8 in 10, 9 for 9 in 10 and 19 for 19 in 20. In our tests on handwritten
+  digits, sets aimed at 9 in 10 held the right answer 92% of the time on new examples, and at 19 in 20,
+  94.5%. It holds for new examples that are like the ones you trained on.
 - **Mistakes.** After training, you see the held-back examples the model got wrong, most confident
   first: on the Model builder's **Train** step for photo models, and on the dataset's **Train** tab
   for the others. Move any that are filed in the wrong category, or remove them.
@@ -504,7 +512,7 @@ pretrained models into `backend/.test-cache/`.
   test in a separate, time-limited process; `projects.py` stores saved designs.
 - Data: `datasets.py` stores datasets and categories; `labelling.py` stores unsorted photos and text
   and makes label suggestions; `versions.py` keeps versions; `opendata.py` imports open datasets;
-  `health.py` and `health_check.py` give levels and run the label check. `coach.py` and `coach_check.py` run the data coach.
+  `health.py` and `health_check.py` give levels and run the label check. `coach.py` and `coach_check.py` run the data coach. `sure.py` works out sure sets.
 - Training: `training.py` runs training and predictions in separate processes; `experiments.py` runs
   Find a better model; `augment.py` varies training photos; `checkup.py` makes the training check.
 - Kinds of model: `finder.py` finds things in photos, with `namefinder.py` (OWLv2) suggesting boxes from names; `outline.py` outlines things, with MobileSAM

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type Keyboa
 import * as api from "./api";
 import { HeatmapOverlay } from "./Explain";
 import type { DatasetSummary, Grid, Heatmap, SavedModel, SoundAnswer, SoundMistake } from "./types";
+import { SureSet } from "./SureSet";
 
 const RATE = 16000;
 const KEPT_SECONDS = 3;
@@ -570,6 +571,7 @@ export function SoundTry({ model, beginner }: { model: SavedModel; beginner: boo
           <Spectrogram spectrogram={answer.spectrogram} heatmap={explain ? answer.heatmap : null} />
           <div className="webcam-side">
             <Answers answer={answer} />
+            {source === "file" && <SureSet answers={answer.answers} sure={model.sure} beginner={beginner} />}
             {source === "file" && answer.clips > 1 && <p className="muted small">Averaged over {answer.clips} one-second clips. The picture shows the first second.</p>}
             {explain && answer.heatmap && (
               <p className="muted small heatmap-key">

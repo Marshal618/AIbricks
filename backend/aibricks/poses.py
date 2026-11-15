@@ -280,10 +280,12 @@ def main():
     results = []
     for (photo, label), features in zip(check, found[len(train):]):
         if features is None:
-            results.append({"file": photo.name, "actual": categories[label], "guess": NOTHING, "chance": 0.0})
+            results.append({"file": photo.name, "actual": categories[label], "guess": NOTHING, "chance": 0.0,
+                            "chances": {name: 0.0 for name in categories}})
             continue
-        top = answers(network, features, categories)[0]
-        results.append({"file": photo.name, "actual": categories[label], "guess": top["category"], "chance": top["chance"]})
+        found = answers(network, features, categories)
+        results.append({"file": photo.name, "actual": categories[label], "guess": found[0]["category"], "chance": found[0]["chance"],
+                        "chances": {row["category"]: row["chance"] for row in found}})
 
     partial = Path("model.partial")
     shutil.rmtree(partial, ignore_errors=True)

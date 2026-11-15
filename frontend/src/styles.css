@@ -921,3 +921,9 @@ polyline.outline-shape.is-preview { fill: none; }
 .coach-next-text { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
 .coach-next-text li { margin-bottom: 3px; overflow-wrap: anywhere; }
 .coach progress { width: 100%; }
+
+/* Sure sets */
+.sure-set { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.sure-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 2px; }
+.sure-line strong { font-size: 16px; overflow-wrap: anywhere; }
+.sure-levels { margin-top: 6px; }

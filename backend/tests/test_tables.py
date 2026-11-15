@@ -169,6 +169,7 @@ def test_predicting_a_category_reports_against_guessing():
     assert metrics["task"] == "category" and metrics["accuracy"] > metrics["baseline"]
     assert job["best"]["accuracy"] == metrics["accuracy"] or abs(job["best"]["accuracy"] - metrics["accuracy"]) < 0.001
     assert job["review"]["total"] == metrics["total"] and set(job["review"]["categories"]) == {"High", "Low"}
+    assert job["sure"]["examples"] == metrics["total"] and "0.9" in job["sure"]["levels"]
     answers = client.post(f"/api/models/{job['id']}/try-row", json={"values": {"size": "290", "area": "City"}}).json()["answers"]
     assert answers[0]["category"] == "High" and abs(sum(row["chance"] for row in answers) - 1) < 0.01
 

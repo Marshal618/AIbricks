@@ -207,6 +207,7 @@ class Job:
     stepsDone: int = 0
     stepsTotal: int = 0
     metrics: dict | None = None
+    sure: dict | None = None
 
 
 def _folder(job: Job) -> Path:
@@ -541,6 +542,11 @@ def _review_table(job: Job) -> None:
     held = json.loads((_folder(job) / "data" / "held_out.json").read_text(encoding="utf-8"))
     _save_held_out(job, metrics["task"], [tuple(row) for row in held])
     if metrics["task"] == "category":
+        from . import sure
+        try:
+            job.sure = sure.summary(json.loads((_folder(job) / "data" / "sure_rows.json").read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            job.sure = None
         job.review = {
             "total": metrics["total"], "correct": metrics["correct"], "categories": metrics["perClass"],
             "mistakeCount": metrics["total"] - metrics["correct"], "mistakes": [],
@@ -560,6 +566,8 @@ def _review_writer(job: Job) -> None:
 
 
 def _summarise_review(job: Job, rows: list[dict]) -> None:
+    from . import sure  # imported here to keep this module's imports light
+    job.sure = sure.summary(rows)
     categories: dict[str, dict[str, int]] = {name: {"correct": 0, "total": 0} for name in job.categories}
     for row in rows:
         categories[row["actual"]]["total"] += 1

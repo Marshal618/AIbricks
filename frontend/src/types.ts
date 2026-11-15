@@ -264,6 +264,7 @@ export interface SavedModel {
   stepsTotal: number;
   error: string | null;
   checkup?: CheckupFinding[];
+  sure?: SureSummary | null;
 }
 
 export interface OpenDataResult {
@@ -367,6 +368,7 @@ export interface TrainingJob {
   review: TrainingReview | null;
   reviewError: string | null;
   checkup?: CheckupFinding[];
+  sure?: SureSummary | null;
 }
 
 export interface TrainingMistake {
@@ -819,4 +821,10 @@ export interface DataCoach {
   labelledNow: number;
   minPerCategory: number;
   result: CoachResult | null;
+}
+
+/** Sure sets: cut-offs worked out from the held-back examples, for each share of the time they hold the right answer. */
+export interface SureSummary {
+  examples: number;
+  levels: Record<string, { cutoff: number; right: number; size: number; single: number }>;
 }

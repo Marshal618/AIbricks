@@ -82,6 +82,7 @@ def test_train_try_review_download_and_link_to_version(workspace):  # noqa: F811
     assert job["trainCount"] == 14 and job["checkCount"] == 2 and job["stepsDone"] == job["stepsTotal"] > 0
     assert job["categories"] == {"Good": 8, "Bad": 8} and job["review"]["total"] == 2
     assert job["best"]["accuracy"] is not None and job["hasModel"] is True
+    assert job["sure"] is None  # 2 held-back texts are too few to promise anything
 
     run = workspace / "runs" / job["id"]
     # The run keeps no copy of the text once it ends.

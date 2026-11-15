@@ -1152,8 +1152,10 @@ def review():
     rows = []
     for index in check_data.indices:
         path, label = check_data.dataset.samples[index]
-        guess, chance = answer(model, path)[0]
-        rows.append({"path": str(path), "actual": CLASS_NAMES[label], "guess": guess, "chance": chance})
+        answers = answer(model, path)
+        guess, chance = answers[0]
+        rows.append({"path": str(path), "actual": CLASS_NAMES[label], "guess": guess, "chance": chance,
+                     "chances": dict(answers)})
     return rows
 
 
