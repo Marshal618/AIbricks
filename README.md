@@ -122,6 +122,27 @@ flags were real errors. Spreadsheet datasets show table statistics instead, such
 and blank cells. The label check isn't available for sound or poses yet, so those datasets reach
 level 2 at most.
 
+### How much more data?
+
+On a photo or text dataset that sorts into categories, the **Check** tab has a data coach. Choose
+**Ask the coach** once there are at least 5 labelled examples in each of 2 categories. It answers two
+questions:
+
+- **Would more data help, and how much?** It trains a quick stand-in model (the same pretrained
+  model and simple classifier as the label check) on 10% up to all of your labels, always testing on
+  examples it didn't learn from. Accuracy usually improves along a smooth curve as data grows, so it
+  fits that curve and follows it forward: for example, "about 77% now, about 85% with twice as many,
+  likely 81% to 88%". It says whether more data should help a lot, a little, or is levelling off, which
+  categories would gain most, and, if it's levelling off, what to try instead. The model you design may
+  score higher or lower than the stand-in, but tends to improve in a similar way.
+- **What should I label next?** It ranks your unlabelled examples by how unsure the stand-in is about
+  them, while keeping the picks different from each other and from what's labelled. The Label tab then
+  shows them first, until you have a trained model that makes its own suggestions.
+
+In our tests on handwritten digits, its estimates for twice and four times the data were within about
+1 point on average (a few points either way for a single dataset), and the real result fell inside
+its range. Labelling its picks reached the same accuracy as random picking with about 40% fewer labels.
+
 ### Versions
 
 **History** saves versions of your data and labels, so you can compare or restore them. Training
@@ -363,6 +384,27 @@ file and opened on another computer. Files contain the design only, not data or 
 - **Held-back examples.** Every run holds back about 20% of the data to check the model on. They're
   picked by a fingerprint of each example rather than at random, so models trained on the same
   dataset are checked on mostly the same examples, even after you add data.
+- **Sure sets.** When you try a photo, text, sound, pose or spreadsheet row, it also names a sure
+  set: every answer it can't rule out, such as "versicolor or virginica". Choose how often the set
+  should hold the right answer: 8 in 10, 9 in 10 or 19 in 20. Asking for more makes the sets bigger,
+  and a set naming every answer means its top guess isn't safe to trust. The cut-off comes from the
+  held-back examples (split conformal prediction, as explained by Angelopoulos and Bates, 2021), so it
+  needs enough of them: 4 for 8 in 10, 9 for 9 in 10 and 19 for 19 in 20. In our tests on handwritten
+  digits, sets aimed at 9 in 10 held the right answer 92% of the time on new examples, and at 19 in 20,
+  94.5%. It holds for new examples that are like the ones you trained on.
+- **Is this like what it learned from?** A model always picks one of its answers, even for something
+  it has never seen. When you try a photo or text on a sorter, it also says whether it looks like what
+  the model learned from. If it doesn't, you get a warning and the closest examples it did learn from.
+  A ready-made model (ResNet-18 for photos, MiniLM for text) describes each example. The distance is
+  how far a new one is from its 5th closest training example (deep nearest neighbours, Sun et al.,
+  2022). The warning shows when it's farther than 19 in 20 of the held-back examples, and of the
+  training examples each measured against the others (conformal p-values, Bates et al., 2023). So
+  about 1 ordinary example in 20 gets a warning it didn't need. It needs about 20 examples in all. In
+  our tests on a planes, cars and ships model with 120 training photos, it warned about 4% of new
+  vehicle photos, all random-noise photos and handwritten digits, and about two thirds of cat
+  and dog photos. Text is harder to tell apart: with 400 news posts about space, cars and medicine, it
+  warned about 84% of short everyday messages and about half of posts on other topics. The first try
+  takes a little longer while it describes the training examples.
 - **Mistakes.** After training, you see the held-back examples the model got wrong, most confident
   first: on the Model builder's **Train** step for photo models, and on the dataset's **Train** tab
   for the others. Move any that are filed in the wrong category, or remove them.
@@ -483,7 +525,7 @@ pretrained models into `backend/.test-cache/`.
   test in a separate, time-limited process; `projects.py` stores saved designs.
 - Data: `datasets.py` stores datasets and categories; `labelling.py` stores unsorted photos and text
   and makes label suggestions; `versions.py` keeps versions; `opendata.py` imports open datasets;
-  `health.py` and `health_check.py` give levels and run the label check.
+  `health.py` and `health_check.py` give levels and run the label check. `coach.py` and `coach_check.py` run the data coach. `sure.py` works out sure sets. `familiar.py` warns about photos and text unlike the training examples.
 - Training: `training.py` runs training and predictions in separate processes; `experiments.py` runs
   Find a better model; `augment.py` varies training photos; `checkup.py` makes the training check.
 - Kinds of model: `finder.py` finds things in photos, with `namefinder.py` (OWLv2) suggesting boxes from names; `outline.py` outlines things, with MobileSAM

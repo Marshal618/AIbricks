@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import * as api from "./api";
-import type { DatasetSummary, PoseAnswer, SavedModel, TrainingMistake } from "./types";
+import type { DatasetSummary, PoseAnswer, SavedModel, SureSummary, TrainingMistake } from "./types";
 import { Why } from "./Ui";
 import { CameraView, grab, useCamera } from "./Webcam";
 import { ModelApp } from "./ModelApp";
+import { SureSet } from "./SureSet";
 
 export const POSE_MINIMUM = 2;
 export const POSE_TOTAL = 10;
@@ -202,7 +203,7 @@ function LivePose({ jobId, kind, beginner }: { jobId: string; kind: "body" | "ha
   );
 }
 
-function PosePhoto({ jobId, file, src, kind }: { jobId: string; file: File; src: string; kind: "body" | "hands" }) {
+function PosePhoto({ jobId, file, src, kind, sure, beginner }: { jobId: string; file: File; src: string; kind: "body" | "hands"; sure: SureSummary | null | undefined; beginner: boolean }) {
   const [answer, setAnswer] = useState<PoseAnswer | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
@@ -221,6 +222,7 @@ function PosePhoto({ jobId, file, src, kind }: { jobId: string; file: File; src:
       <div className="webcam-side">
         {!answer && !problem && <p className="muted small">Checking…</p>}
         {answer && <Answers answer={answer} kind={kind} />}
+        {answer?.found && <SureSet answers={answer.answers} sure={sure} beginner={beginner} />}
         {problem && <p className="small tone-bad" role="alert">{problem}</p>}
       </div>
     </div>
@@ -247,7 +249,7 @@ export function PoseTry({ model, kind, beginner }: { model: SavedModel; kind: "b
           }} />
         </label>
       </div>
-      {chosen && <PosePhoto key={chosen.src} jobId={model.id} file={chosen.file} src={chosen.src} kind={kind} />}
+      {chosen && <PosePhoto key={chosen.src} jobId={model.id} file={chosen.file} src={chosen.src} kind={kind} sure={model.sure} beginner={beginner} />}
       <LivePose jobId={model.id} kind={kind} beginner={beginner} />
       <ModelApp jobId={model.id} beginner={beginner} pose example={`beep when it sees ${Object.keys(model.categories)[0] ?? (kind === "hands" ? "a thumbs up" : "arms up")}`} />
     </section>

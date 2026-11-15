@@ -7,6 +7,8 @@ import { ModelApp } from "./ModelApp";
 import { TrainingCheck } from "./TrainingCheck";
 import { WebcamTry } from "./Webcam";
 import type { DatasetInfo, DatasetSummary, FixKind, GraphPayload, PredictAnswer, TrainingJob, TrainingReview } from "./types";
+import { SureSet } from "./SureSet";
+import { FamiliarNote } from "./Familiar";
 
 const MODELS_KEPT = 10;
 
@@ -661,6 +663,8 @@ function TryModel({ job, beginner }: { job: TrainingJob; beginner: boolean }) {
           ))}
         </ul>
       )}
+      {answers && <SureSet answers={answers} sure={job.sure} beginner={beginner} />}
+      {answers && chosen && <FamiliarNote jobId={job.id} file={chosen} beginner={beginner} />}
       {answers && <p className="muted small field-note">{beginner ? "These chances are the model's own confidence. It can be confident and still wrong." : "Softmax output. These values aren't calibrated probabilities."}</p>}
     </section>
   );

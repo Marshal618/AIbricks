@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import * as api from "./api";
 import type { DatasetSummary, PredictAnswer, SavedModel, TableAnalysis, TableSchema } from "./types";
+import { SureSet } from "./SureSet";
 
 function message(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -254,6 +255,7 @@ function TableTry({ model, beginner }: { model: SavedModel; beginner: boolean })
         {value !== null && <p className="table-answer">{schema.target}: about {plain(value)}</p>}
         {answers && <p className="table-answer">{schema.target}: {answers[0].category} <span className="muted small">{Math.round(answers[0].chance * 100)}% likely</span></p>}
       </div>
+      {answers && <SureSet answers={answers} sure={model.sure} beginner={beginner} />}
     </>
   );
 }

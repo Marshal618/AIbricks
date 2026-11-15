@@ -1,4 +1,4 @@
-import type { ChatTurn, WriterAnalysis, ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
+import type { FamiliarCheck, FamiliarStatus, ChatTurn, DataCoach, WriterAnalysis, ForecastAnalysis, ForecastDetails, PoseAnswer, TrainingMistake, Box, BoxedPhoto, FoundBoxes, FoundOutlines, Experiment, FailureSearch, SoundAnswer, SoundMistake, SystemInfo, WorkspaceModel, ImageExplanation, TextExplanation, Analysis, Catalogue, DatasetInfo, DatasetPreview, DatasetSummary, DatasetVersion, GraphPayload, ImageQueue, ModelCard, ModelCardNotes, ModelComparison, OpenDataImport, OpenDataInfo, OpenDataResult, OpenDataSource, ParseReply, PredictAnswer, ProjectData, DataHealth, ProjectRow, SavedModel, TableAnalysis, TableSchema, TestEvent, TextMistake, TextQueue, TrainingJob, VersionChanges, VersionOverview } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   try {
@@ -562,4 +562,28 @@ export async function findBoxes(job: string, file: Blob): Promise<FoundBoxes> {
   const response = await sendFile(`/api/train/${job}/predict-live`, file);
   if (!response.ok) throw new Error(await errorMessage(response));
   return response.json();
+}
+
+// ------------------------------------------------------------- the data coach
+
+export const fetchCoach = (dataset: string): Promise<DataCoach> => getJson(`/api/datasets/${dataset}/coach`);
+
+export const startCoach = (dataset: string): Promise<{ job: DataCoach["job"] }> => sendJson(`/api/datasets/${dataset}/coach`);
+
+// ------------------------------------------------------------- is this like what it learned from?
+
+export const fetchFamiliar = (job: string): Promise<FamiliarStatus> => getJson(`/api/models/${job}/familiar`);
+
+export const prepareFamiliar = (job: string): Promise<FamiliarStatus> => sendJson(`/api/models/${job}/familiar`);
+
+export async function checkFamiliarPhoto(job: string, file: File): Promise<FamiliarCheck> {
+  const response = await sendFile(`/api/models/${job}/familiar/photo`, file);
+  if (!response.ok) throw new Error(await errorMessage(response));
+  return response.json();
+}
+
+export const checkFamiliarText = (job: string, text: string): Promise<FamiliarCheck> => sendJson(`/api/models/${job}/familiar/text`, { text });
+
+export function familiarPhotoUrl(job: string, index: number) {
+  return `/api/models/${job}/familiar/photos/${index}`;
 }

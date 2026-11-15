@@ -159,6 +159,7 @@ def test_it_learns_hand_signs(workspace, tmp_path):  # noqa: F811
     assert metrics["task"] == "pose" and metrics["points"] == "hands"
     assert metrics["nothingFoundTraining"] + metrics["nothingFoundChecking"] >= 1
     assert job["review"]["correct"] >= 0.75 * job["review"]["total"], job["review"]
+    assert job["sure"]["examples"] == job["review"]["total"] and job["sure"]["levels"]
 
     for category, image in images.items():
         reply = client.post(f"/api/train/{job['id']}/predict-live", content=variant(image, 500), headers=BINARY)

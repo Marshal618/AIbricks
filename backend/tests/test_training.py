@@ -144,6 +144,9 @@ def test_train_try_and_download(workspace):
     assert review["correct"] / review["total"] == pytest.approx(job["best"]["accuracy"])
     assert sum(c["total"] for c in review["categories"].values()) == 8
     assert review["mistakeCount"] == review["total"] - review["correct"]
+    # 8 held-back photos are enough to promise sure sets right 8 times in 10, but not 9 in 10.
+    assert job["sure"]["examples"] == 8 and set(job["sure"]["levels"]) == {"0.8"}
+    assert 0 <= job["sure"]["levels"]["0.8"]["cutoff"] <= 1 and job["sure"]["levels"]["0.8"]["size"] >= 1
 
     # The downloaded web API answers real requests.
     api_folder = unpacked / "colours"

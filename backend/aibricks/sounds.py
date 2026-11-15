@@ -435,7 +435,8 @@ def main():
     save(head, names)
     with open("data/review.json", "w", encoding="utf-8") as file:
         json.dump([
-            {"file": path.name, "actual": name, "guess": names[int(row.argmax())], "chance": float(row.max())}
+            {"file": path.name, "actual": name, "guess": names[int(row.argmax())], "chance": float(row.max()),
+             "chances": {category: float(value) for category, value in zip(names, row.tolist())}}
             for (path, name), row in zip(check, chances)
         ], file)
     print(f"Epoch 1/1  training loss {train_loss:.4f}  check loss {check_loss:.4f}  check accuracy {100 * right / len(check):.1f}%", flush=True)

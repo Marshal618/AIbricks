@@ -494,6 +494,12 @@ def main():
             for index, answer, guess in zip(check_rows, check_y, guesses)]
     with open("data/held_out.json", "w", encoding="utf-8") as file:
         json.dump(held, file)
+    if task == "category":
+        # Each held-back row's chances, with no row data, for the sure sets.
+        sure_rows = [{"actual": str(answer), "chances": {str(name): float(chance) for name, chance in zip(classes, row)}}
+                     for answer, row in zip(check_y, chances)]
+        with open("data/sure_rows.json", "w", encoding="utf-8") as file:
+            json.dump(sure_rows, file)
     print("Step 3/3", flush=True)
     accuracy_text = f"{100 * score:.1f}" if task == "category" else "nan"
     print(f"Epoch 1/1  training loss nan  check loss {check_loss:.4f}  check accuracy {accuracy_text}%", flush=True)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import type { DataHealth, DatasetSummary, HealthIssue, HealthPair } from "./types";
+import { DataCoachCard } from "./DataCoach";
 
 function message(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -12,7 +13,7 @@ function Thumb({ dataset, item, label }: { dataset: DatasetSummary; item: string
   return <img src={api.datasetPreviewImage(dataset.id, label, item)} alt={`Example filed under ${label}`} loading="lazy" />;
 }
 
-export function DataHealthTab({ dataset, beginner, onChanged }: { dataset: DatasetSummary; beginner: boolean; onChanged: () => void }) {
+export function DataHealthTab({ dataset, beginner, onChanged, onOpenLabels }: { dataset: DatasetSummary; beginner: boolean; onChanged: () => void; onOpenLabels: () => void }) {
   const [health, setHealth] = useState<DataHealth | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
@@ -112,6 +113,10 @@ export function DataHealthTab({ dataset, beginner, onChanged }: { dataset: Datas
         )}
         {level === 4 && <p className="small field-note">Every flagged label has been reviewed. Run the check again after adding more data.</p>}
       </section>
+
+      {(dataset.kind === "image" || dataset.kind === "text") && (!dataset.goal || dataset.goal === "sort") && (
+        <DataCoachCard dataset={dataset} beginner={beginner} onOpenLabels={onOpenLabels} />
+      )}
 
       {(health.conflicts?.length ?? 0) > 0 && (
         <section className="card">

@@ -195,7 +195,8 @@ def main():
     check_loss = sum(-torch.log(torch.tensor(max(next(a["chance"] for a in result if a["category"] == actual), 1e-9))).item() for result, (_, actual) in zip(results, check)) / len(check)
     save(encoder, head, names)
     with open("data/review.json", "w", encoding="utf-8") as file:
-        json.dump([{"text": text, "actual": actual, "guess": result[0]["category"], "chance": result[0]["chance"]} for result, (text, actual) in zip(results, check)], file)
+        json.dump([{"text": text, "actual": actual, "guess": result[0]["category"], "chance": result[0]["chance"],
+                    "chances": {a["category"]: a["chance"] for a in result}} for result, (text, actual) in zip(results, check)], file)
     print(f"Epoch 1/1  training loss {train_loss:.4f}  check loss {check_loss:.4f}  check accuracy {100 * right / len(check):.1f}%", flush=True)
 
 
