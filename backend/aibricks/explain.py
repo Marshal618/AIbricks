@@ -12,7 +12,6 @@ Both show where the model looked, which is evidence about its reasoning, not pro
 from __future__ import annotations
 
 import json
-import subprocess
 
 MAX_WORDS = 80
 GRID_LIMIT = 32  # Grad-CAM cells across, at most
@@ -146,21 +145,5 @@ def explain_text(job_id: str, text: str) -> dict:
     from . import textmodels, training
 
     job = textmodels._text_job(job_id)
-    if job.status == "running":
-        raise training.TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise training.TrainingError(409, "This model's file is no longer saved.")
-    folder = training._folder(job)
-    try:
-        with training._predictions:
-            done = subprocess.run(
-                [training.sys.executable, "-I", "-c", _TEXT_RUNNER], cwd=folder,
-                env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
-                input=text, capture_output=True, text=True, errors="replace", timeout=training.PREDICT_LIMIT_SECONDS,
-            )
-    except subprocess.TimeoutExpired:
-        raise training.TrainingError(504, "The model took too long to answer.") from None
-    if done.returncode != 0:
-        lines = [line for line in done.stderr.splitlines() if line.strip()]
-        raise training.TrainingError(500, lines[-1][:600] if lines else "The model could not read this text.")
-    return json.loads(done.stdout.strip().splitlines()[-1])
+    training.finished(job)
+    return training.run_model(training._folder(job), [training.sys.executable, "-I", "-c", _TEXT_RUNNER], "The model could not read this text.", text)

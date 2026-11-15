@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react";
 import * as api from "./api";
 import type { Box, BoxedPhoto, CheckedPhoto, DatasetSummary, FoundBoxes, SavedModel } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 import { CameraView, grab, useCamera } from "./Webcam";
 import { ModelApp } from "./ModelApp";
 
@@ -14,10 +14,6 @@ const STRIP_LIMIT = 80;
 const NAME_SURE = 0.2;
 // Distinct colours for each thing. Every box also carries its thing's name, so colour is never the only clue.
 export const COLOURS = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#c2255c", "#0c8599", "#f08c00", "#5c7cfa", "#66a80f"];
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 export function colourOf(categories: string[], name: string) {
   const index = categories.indexOf(name);

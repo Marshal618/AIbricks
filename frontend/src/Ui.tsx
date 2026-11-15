@@ -20,3 +20,8 @@ export function StepHeading({ number, title, done, children }: { number?: number
     </div>
   );
 }
+
+/** An error's own message, or the fallback when it isn't an Error. */
+export function message(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}

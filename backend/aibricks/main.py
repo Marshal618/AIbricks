@@ -13,7 +13,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
@@ -135,16 +135,15 @@ def _needs_json(request: Request) -> None:
         raise HTTPException(415, {"message": "Send this request as application/json."})
 
 
-def _raise(error: training.TrainingError) -> HTTPException:
-    return HTTPException(error.status, {"message": error.message})
+@app.exception_handler(training.TrainingError)
+async def _training_error(_: Request, error: training.TrainingError) -> JSONResponse:
+    """Any problem to show the user becomes an HTTP error with its message, the same shape HTTPException gives."""
+    return JSONResponse({"detail": {"message": error.message}}, status_code=error.status)
 
 
 def _scope(dataset: str = Query(default=training.DEFAULT_DATASET, max_length=40)) -> str:
     """The dataset a request applies to."""
-    try:
-        datasets.require(dataset)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    datasets.require(dataset)
     return dataset
 
 
@@ -177,18 +176,12 @@ def get_dataset(dataset: Scope, category: list[str] = Query(default=[], max_leng
 @app.post("/api/dataset/images")
 async def add_dataset_image(request: Request, dataset: Scope, category: str = Query(min_length=1, max_length=200)) -> dict:
     data = await _read_upload(request)
-    try:
-        return await run_in_threadpool(training.add_image, category, data, dataset)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(training.add_image, category, data, dataset)
 
 
 @app.delete("/api/dataset/images")
 def clear_dataset_images(dataset: Scope, category: str = Query(min_length=1, max_length=200)) -> dict:
-    try:
-        training.clear_category(category, dataset)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    training.clear_category(category, dataset)
     return {"ok": True}
 
 
@@ -212,31 +205,22 @@ def start_training(graph: graphs.GraphIn, dataset: Scope) -> dict:
     if labelling.is_suggesting():
         raise HTTPException(409, {"message": "Wait for the model to finish making suggestions."})
     epochs = int(codegen.training_settings(graph)["epochs"])
-    try:
-        job = training.start(
-            graph.projectName, codegen.slug(graph.projectName), build_hash, files, names, epochs, dataset,
-            None if dataset == training.DEFAULT_DATASET else versions.freeze,
-        )
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    job = training.start(
+        graph.projectName, codegen.slug(graph.projectName), build_hash, files, names, epochs, dataset,
+        None if dataset == training.DEFAULT_DATASET else versions.freeze,
+    )
     return {"job": training.public(job)}
 
 
 @app.delete("/api/train/{job_id}")
 def stop_training(job_id: str) -> dict:
-    try:
-        return {"job": training.public(training.stop(job_id))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(training.stop(job_id))}
 
 
 @app.post("/api/train/{job_id}/predict")
 async def predict(job_id: str, request: Request) -> dict:
     data = await _read_upload(request)
-    try:
-        return {"answers": await run_in_threadpool(training.predict, job_id, data)}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"answers": await run_in_threadpool(training.predict, job_id, data)}
 
 
 @app.post("/api/train/{job_id}/predict-live")
@@ -246,10 +230,7 @@ async def predict_live(job_id: str, request: Request, explain: bool = False) -> 
     With explain=true, the reply also has a heatmap of where in the photo the model looked.
     """
     data = await _read_upload(request)
-    try:
-        reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    reply = await run_in_threadpool(training.predict_live, job_id, data, explain)
     if "boxes" in reply or "points" in reply or "mask" in reply:
         return reply  # a detector's boxes and counts, or the body and hand points a pose model found
     return reply if explain else {"answers": reply["answers"]}
@@ -259,10 +240,7 @@ async def predict_live(job_id: str, request: Request, explain: bool = False) -> 
 async def explain_image(job_id: str, request: Request) -> dict:
     """The model's answers for a photo, and a heatmap of where it looked."""
     data = await _read_upload(request)
-    try:
-        return await run_in_threadpool(training.predict_live, job_id, data, True)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(training.predict_live, job_id, data, True)
 
 
 _APP_POLICY = (
@@ -275,10 +253,7 @@ _APP_POLICY = (
 @app.get("/api/train/{job_id}/app")
 def model_app(job_id: str, download: bool = False) -> Response:
     """A web page that runs this photo model by itself, in any browser, with its own rules."""
-    try:
-        text, name = webapp.page(job_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    text, name = webapp.page(job_id)
     headers = {"Content-Security-Policy": _APP_POLICY, "Cache-Control": "no-store"}
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{name}"'
@@ -288,19 +263,13 @@ def model_app(job_id: str, download: bool = False) -> Response:
 @app.get("/api/train/{job_id}/pi")
 def model_pi_kit(job_id: str) -> Response:
     """A zip that runs this model on a Raspberry Pi's camera, with rules that switch its pins."""
-    try:
-        data, name = pi.kit(job_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    data, name = pi.kit(job_id)
     return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @app.get("/api/train/{job_id}/mistakes/{index}")
 def mistake_image(job_id: str, index: int) -> FileResponse:
-    try:
-        path = training.mistake_image(job_id, index)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    path = training.mistake_image(job_id, index)
     return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
@@ -311,10 +280,7 @@ class MistakeFix(BaseModel):
 
 @app.post("/api/train/{job_id}/mistakes/{index}/fix")
 def fix_mistake(job_id: str, index: int, fix: MistakeFix) -> dict:
-    try:
-        return {"job": training.public(training.fix_mistake(job_id, index, fix.action, fix.category))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(training.fix_mistake(job_id, index, fix.action, fix.category))}
 
 
 @app.get("/api/train/{job_id}/download")
@@ -325,9 +291,9 @@ def download_trained(job_id: str) -> FileResponse:
     try:
         stored = training.stored(job_id)
         job = training.bundle(job_id, Path(path), versions.credits(stored), cards.markdown(stored))
-    except training.TrainingError as error:
+    except training.TrainingError:
         os.unlink(path)
-        raise _raise(error) from None
+        raise
     return FileResponse(
         path, media_type="application/zip", filename=f"{job.slug}_trained.zip",
         background=BackgroundTask(os.unlink, path),
@@ -377,21 +343,15 @@ class LabelUndo(BaseModel):
 
 
 def _labelled(action, *arguments):
-    """Runs a labelling action and returns {"ok": true}, or the problem as an HTTP error."""
-    try:
-        action(*arguments)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    """Runs a labelling action and returns {"ok": true}."""
+    action(*arguments)
     return {"ok": True}
 
 
 @app.post("/api/label/images")
 async def add_unsorted_image(request: Request, dataset: Scope) -> dict:
     data = await _read_upload(request)
-    try:
-        return await run_in_threadpool(labelling.add_image, data, dataset)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(labelling.add_image, data, dataset)
 
 
 @app.get("/api/label/images")
@@ -411,10 +371,7 @@ def suggest_labels(dataset: Scope) -> dict:
 
 @app.get("/api/label/images/{image_id}/file")
 def get_unsorted_image(image_id: str, dataset: Scope) -> FileResponse:
-    try:
-        path = labelling.image_file(image_id, dataset)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    path = labelling.image_file(image_id, dataset)
     return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
@@ -436,10 +393,7 @@ def remove_image(image_id: str, dataset: Scope) -> dict:
 @app.post("/api/label/text")
 async def add_unsorted_text(request: Request, dataset: Scope, kind: Literal["csv", "lines"] = "lines") -> dict:
     data = await _read_upload(request, labelling.MAX_TEXT_FILE_BYTES)
-    try:
-        return await run_in_threadpool(labelling.add_text, data, kind, dataset)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(labelling.add_text, data, kind, dataset)
 
 
 @app.get("/api/label/text")
@@ -486,26 +440,17 @@ class OpenDataImport(BaseModel):
 
 @app.get("/api/open-data/search")
 def search_open_data(kind: Literal["image", "text"], q: str = Query(default="", max_length=100)) -> dict:
-    try:
-        return {"results": opendata.search(q, kind)}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"results": opendata.search(q, kind)}
 
 
 @app.get("/api/open-data/inspect")
 def inspect_open_data(kind: Literal["image", "text"], dataset: str = Query(max_length=200)) -> dict:
-    try:
-        return opendata.inspect(dataset, kind)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return opendata.inspect(dataset, kind)
 
 
 @app.post("/api/open-data/import")
 def start_open_data_import(request: OpenDataImport, dataset: Scope) -> dict:
-    try:
-        return {"job": opendata.start_import(request.dataset, request.kind, request.mapping, request.perCategory, dataset)}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": opendata.start_import(request.dataset, request.kind, request.mapping, request.perCategory, dataset)}
 
 
 @app.get("/api/open-data/import")
@@ -534,13 +479,6 @@ class CategoryRename(BaseModel):
     new: str = Field(max_length=200)
 
 
-def _dataset_reply(action, *arguments) -> dict:
-    try:
-        return action(*arguments)
-    except training.TrainingError as error:
-        raise _raise(error) from None
-
-
 @app.get("/api/datasets")
 def list_datasets() -> dict:
     return {"datasets": datasets.listing()}
@@ -548,32 +486,32 @@ def list_datasets() -> dict:
 
 @app.post("/api/datasets")
 def create_dataset(request: datasets.DatasetIn) -> dict:
-    return _dataset_reply(datasets.create, request)
+    return datasets.create(request)
 
 
 @app.get("/api/datasets/{dataset_id}")
 def get_saved_dataset(dataset_id: str) -> dict:
-    return _dataset_reply(datasets.get, dataset_id)
+    return datasets.get(dataset_id)
 
 
 @app.put("/api/datasets/{dataset_id}/name")
 def rename_dataset(dataset_id: str, request: DatasetRename) -> dict:
-    return _dataset_reply(datasets.rename, dataset_id, request.name)
+    return datasets.rename(dataset_id, request.name)
 
 
 @app.post("/api/datasets/{dataset_id}/categories")
 def add_dataset_categories(dataset_id: str, request: CategoryNames) -> dict:
-    return _dataset_reply(datasets.add_categories, dataset_id, request.names)
+    return datasets.add_categories(dataset_id, request.names)
 
 
 @app.put("/api/datasets/{dataset_id}/categories")
 def rename_dataset_category(dataset_id: str, request: CategoryRename) -> dict:
-    return _dataset_reply(datasets.rename_category, dataset_id, request.old, request.new)
+    return datasets.rename_category(dataset_id, request.old, request.new)
 
 
 @app.delete("/api/datasets/{dataset_id}/categories")
 def remove_dataset_category(dataset_id: str, name: str = Query(max_length=200)) -> dict:
-    return _dataset_reply(datasets.remove_category, dataset_id, name)
+    return datasets.remove_category(dataset_id, name)
 
 
 @app.delete("/api/datasets/{dataset_id}")
@@ -583,20 +521,17 @@ def delete_dataset(dataset_id: str) -> dict:
 
 @app.put("/api/datasets/{dataset_id}/details")
 def update_dataset_details(dataset_id: str, request: datasets.DatasetDetails) -> dict:
-    return _dataset_reply(datasets.update_details, dataset_id, request)
+    return datasets.update_details(dataset_id, request)
 
 
 @app.get("/api/datasets/{dataset_id}/preview")
 def preview_dataset(dataset_id: str) -> dict:
-    return _dataset_reply(datasets.preview, dataset_id)
+    return datasets.preview(dataset_id)
 
 
 @app.get("/api/datasets/{dataset_id}/preview/{image_id}")
 def preview_dataset_image(dataset_id: str, image_id: str, category: str = Query(max_length=200)) -> FileResponse:
-    try:
-        path = datasets.preview_image(dataset_id, category, image_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    path = datasets.preview_image(dataset_id, category, image_id)
     return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
@@ -608,22 +543,22 @@ class VersionIn(BaseModel):
 
 @app.get("/api/datasets/{dataset_id}/versions")
 def list_versions(dataset_id: str) -> dict:
-    return _dataset_reply(versions.overview, dataset_id)
+    return versions.overview(dataset_id)
 
 
 @app.post("/api/datasets/{dataset_id}/versions")
 def save_version(dataset_id: str, request: VersionIn) -> dict:
-    return _dataset_reply(versions.save, dataset_id, request.message)
+    return versions.save(dataset_id, request.message)
 
 
 @app.get("/api/datasets/{dataset_id}/versions/{number}/compare")
 def compare_version(dataset_id: str, number: int) -> dict:
-    return _dataset_reply(versions.compare, dataset_id, number)
+    return versions.compare(dataset_id, number)
 
 
 @app.post("/api/datasets/{dataset_id}/versions/{number}/restore", dependencies=[Depends(_needs_json)])
 def restore_version(dataset_id: str, number: int) -> dict:
-    return _dataset_reply(versions.restore, dataset_id, number)
+    return versions.restore(dataset_id, number)
 
 
 @app.delete("/api/datasets/{dataset_id}/versions/{number}")
@@ -650,11 +585,8 @@ def system_info() -> dict:
 
 @app.get("/api/datasets/{dataset_id}/models")
 def list_dataset_models(dataset_id: str) -> dict:
-    try:
-        datasets._read(dataset_id)
-        return {"models": training.saved_models(dataset_id)}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    datasets._read(dataset_id)
+    return {"models": training.saved_models(dataset_id)}
 
 
 class AugmentPreview(BaseModel):
@@ -669,8 +601,6 @@ def augment_preview(request: AugmentPreview) -> dict:
     """One of the dataset's photos, and several versions of it varied as training will vary them."""
     try:
         return augment.preview(request.dataset, request.size, request.channels, request.params)
-    except training.TrainingError as error:
-        raise _raise(error) from None
     except (TypeError, ValueError):
         raise HTTPException(422, {"message": "Those settings aren't valid."}) from None
 
@@ -678,24 +608,18 @@ def augment_preview(request: AugmentPreview) -> dict:
 @app.post("/api/datasets/{dataset_id}/train-unusual", dependencies=[Depends(_needs_json)])
 def train_unusual(dataset_id: str) -> dict:
     """Learns what normal looks like from a “spot what's unusual” dataset's normal photos."""
-    try:
-        return {"job": training.public(anomaly.start(dataset_id))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(anomaly.start(dataset_id))}
 
 
 @app.post("/api/datasets/{dataset_id}/train-pose", dependencies=[Depends(_needs_json)])
 def train_pose(dataset_id: str) -> dict:
     """Learns to sort the body poses or hand signs in a “sort poses” dataset's photos."""
-    try:
-        return {"job": training.public(poses.start(dataset_id))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(poses.start(dataset_id))}
 
 
 @app.get("/api/models/{job_id}/pose-mistakes")
 def pose_mistakes(job_id: str) -> dict:
-    return _dataset_reply(poses.mistakes, job_id)
+    return poses.mistakes(job_id)
 
 
 class UnusualLine(BaseModel):
@@ -704,12 +628,12 @@ class UnusualLine(BaseModel):
 
 @app.get("/api/models/{job_id}/unusual")
 def unusual_settings(job_id: str) -> dict:
-    return _dataset_reply(anomaly.settings, job_id)
+    return anomaly.settings(job_id)
 
 
 @app.put("/api/models/{job_id}/unusual")
 def move_unusual_line(job_id: str, request: UnusualLine) -> dict:
-    return _dataset_reply(anomaly.set_factor, job_id, request.factor)
+    return anomaly.set_factor(job_id, request.factor)
 
 
 class BoxesIn(BaseModel):
@@ -723,30 +647,30 @@ class SureIn(BaseModel):
 @app.get("/api/datasets/{dataset_id}/boxes")
 def list_boxes(dataset_id: str) -> dict:
     """Every photo in a “find things” dataset, with the boxes drawn on those that are done."""
-    return _dataset_reply(finder.listing, dataset_id)
+    return finder.listing(dataset_id)
 
 
 @app.put("/api/datasets/{dataset_id}/boxes/{image_id}")
 def save_boxes(dataset_id: str, image_id: str, request: BoxesIn) -> dict:
     """Saves one photo's boxes. An empty list means there's nothing to find in it."""
-    return _dataset_reply(finder.save_boxes, dataset_id, image_id, request.boxes)
+    return finder.save_boxes(dataset_id, image_id, request.boxes)
 
 
 @app.delete("/api/datasets/{dataset_id}/boxes/{image_id}")
 def clear_boxes(dataset_id: str, image_id: str) -> dict:
-    _dataset_reply(finder.clear_boxes, dataset_id, image_id)
+    finder.clear_boxes(dataset_id, image_id)
     return {"ok": True}
 
 
 @app.get("/api/datasets/{dataset_id}/coach")
 def data_coach(dataset_id: str) -> dict:
     """How much more data would help, and which examples to label next, from the coach's last run."""
-    return _dataset_reply(coach.overview, dataset_id)
+    return coach.overview(dataset_id)
 
 
 @app.post("/api/datasets/{dataset_id}/coach", dependencies=[Depends(_needs_json)])
 def start_data_coach(dataset_id: str) -> dict:
-    return {"job": _dataset_reply(coach.start, dataset_id)}
+    return {"job": coach.start(dataset_id)}
 
 
 class WordsIn(BaseModel):
@@ -756,12 +680,12 @@ class WordsIn(BaseModel):
 @app.get("/api/datasets/{dataset_id}/find-by-name")
 def find_by_name_words(dataset_id: str) -> dict:
     """What the pretrained finder looks for for each thing, and whether it's downloaded."""
-    return _dataset_reply(namefinder.words, dataset_id)
+    return namefinder.words(dataset_id)
 
 
 @app.put("/api/datasets/{dataset_id}/find-by-name")
 def set_find_by_name_words(dataset_id: str, request: WordsIn) -> dict:
-    return _dataset_reply(namefinder.set_words, dataset_id, request.words)
+    return namefinder.set_words(dataset_id, request.words)
 
 
 @app.post("/api/find-by-name/download", dependencies=[Depends(_needs_json)])
@@ -778,7 +702,7 @@ def name_finder_status() -> dict:
 @app.post("/api/datasets/{dataset_id}/find-by-name/{image_id}", dependencies=[Depends(_needs_json)])
 def find_by_name(dataset_id: str, image_id: str) -> dict:
     """Suggested boxes for one photo, from each thing's words, found by OWLv2 on this computer."""
-    return _dataset_reply(namefinder.find, dataset_id, image_id)
+    return namefinder.find(dataset_id, image_id)
 
 
 class ClicksIn(BaseModel):
@@ -788,29 +712,23 @@ class ClicksIn(BaseModel):
 @app.post("/api/datasets/{dataset_id}/outline/{image_id}", dependencies=[Depends(_needs_json)])
 def click_to_outline(dataset_id: str, image_id: str, request: ClicksIn) -> dict:
     """The outline of the thing around the places clicked, found by MobileSAM on this computer."""
-    return _dataset_reply(outline.click, dataset_id, image_id, request.clicks)
+    return outline.click(dataset_id, image_id, request.clicks)
 
 
 @app.post("/api/datasets/{dataset_id}/train-outline", dependencies=[Depends(_needs_json)])
 def train_outline(dataset_id: str) -> dict:
     """Fine-tunes a pretrained outlining model on an “outline things” dataset's outlined photos."""
-    try:
-        return {"job": training.public(outline.start(dataset_id))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(outline.start(dataset_id))}
 
 
 @app.get("/api/models/{job_id}/outline")
 def outline_settings(job_id: str) -> dict:
-    return _dataset_reply(outline.details, job_id)
+    return outline.details(job_id)
 
 
 @app.get("/api/models/{job_id}/outline-review/{number}")
 def outline_review_image(job_id: str, number: int) -> FileResponse:
-    try:
-        path = outline.review_image(job_id, number)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    path = outline.review_image(job_id, number)
     return FileResponse(path, media_type="image/png", headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
@@ -818,31 +736,28 @@ def outline_review_image(job_id: str, number: int) -> FileResponse:
 def train_find(dataset_id: str, detector: Literal["accurate", "fast"] = "accurate") -> dict:
     """Fine-tunes a pretrained detector on a “find things” dataset's boxed photos: the accurate one, or the
     fast one that suits phones, web pages and small computers."""
-    try:
-        return {"job": training.public(finder.start(dataset_id, detector))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(finder.start(dataset_id, detector))}
 
 
 @app.get("/api/models/{job_id}/find")
 def find_settings(job_id: str) -> dict:
-    return _dataset_reply(finder.details, job_id)
+    return finder.details(job_id)
 
 
 @app.put("/api/models/{job_id}/find")
 def set_find_sureness(job_id: str, request: SureIn) -> dict:
-    return _dataset_reply(finder.set_sure, job_id, request.sure)
+    return finder.set_sure(job_id, request.sure)
 
 
 @app.post("/api/models/{job_id}/slices", dependencies=[Depends(_needs_json)])
 def find_where_it_fails(job_id: str) -> dict:
     """Looks for groups of held-back photos the model gets wrong far more often, and names them."""
-    return _dataset_reply(slices.start, job_id)
+    return slices.start(job_id)
 
 
 @app.get("/api/models/{job_id}/slices")
 def where_it_fails(job_id: str) -> dict:
-    return _dataset_reply(slices.status, job_id)
+    return slices.status(job_id)
 
 
 class ExperimentRequest(BaseModel):
@@ -852,19 +767,19 @@ class ExperimentRequest(BaseModel):
 @app.post("/api/datasets/{dataset_id}/experiments")
 def start_experiment(dataset_id: str, request: ExperimentRequest) -> dict:
     """Find a better model: tries several photo models on this dataset within a time limit."""
-    return {"experiment": _dataset_reply(experiments.start, dataset_id, request.minutes)}
+    return {"experiment": experiments.start(dataset_id, request.minutes)}
 
 
 @app.get("/api/datasets/{dataset_id}/experiments")
 def latest_experiment(dataset_id: str) -> dict:
-    _dataset_reply(datasets._read, dataset_id)
+    datasets._read(dataset_id)
     return {"experiment": experiments.latest(dataset_id), "budgets": list(experiments.BUDGETS),
             "changes": {key: {"label": label, "description": text} for key, (label, text) in experiments.CHANGES.items()}}
 
 
 @app.delete("/api/datasets/{dataset_id}/experiments")
 def stop_experiment(dataset_id: str) -> dict:
-    return {"experiment": _dataset_reply(experiments.stop, dataset_id)}
+    return {"experiment": experiments.stop(dataset_id)}
 
 
 @app.get("/api/datasets/{dataset_id}/compare")
@@ -872,21 +787,18 @@ def compare_models(
     dataset_id: str, first: str = Query(min_length=1, max_length=40), second: str = Query(min_length=1, max_length=40),
 ) -> dict:
     """Compares two models on the held-back examples they share."""
-    try:
-        datasets._read(dataset_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
-    return _dataset_reply(comparing.compare, dataset_id, first, second)
+    datasets._read(dataset_id)
+    return comparing.compare(dataset_id, first, second)
 
 
 @app.get("/api/models/{job_id}/card")
 def model_card(job_id: str) -> dict:
-    return _dataset_reply(cards.card, job_id)
+    return cards.card(job_id)
 
 
 @app.put("/api/models/{job_id}/card")
 def update_model_card(job_id: str, notes: cards.CardNotes) -> dict:
-    return _dataset_reply(cards.save_notes, job_id, notes)
+    return cards.save_notes(job_id, notes)
 
 
 @app.delete("/api/models/{job_id}")
@@ -902,76 +814,52 @@ class TextToTry(BaseModel):
 
 @app.post("/api/datasets/{dataset_id}/train-text", dependencies=[Depends(_needs_json)])
 def train_text_model(dataset_id: str) -> dict:
-    try:
-        return {"job": training.public(textmodels.start(dataset_id))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(textmodels.start(dataset_id))}
 
 
 @app.post("/api/models/{job_id}/try")
 def try_text_model(job_id: str, request: TextToTry) -> dict:
-    try:
-        return {"answers": textmodels.try_text(job_id, request.text)}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"answers": textmodels.try_text(job_id, request.text)}
 
 
 @app.get("/api/models/{job_id}/familiar")
 def familiar_status(job_id: str) -> dict:
     """Whether the check for unfamiliar photos or text is ready for this model."""
-    try:
-        return familiar.status(job_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return familiar.status(job_id)
 
 
 @app.post("/api/models/{job_id}/familiar", dependencies=[Depends(_needs_json)])
 def prepare_familiar(job_id: str) -> dict:
-    try:
-        return familiar.start(job_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return familiar.start(job_id)
 
 
 @app.post("/api/models/{job_id}/familiar/photo")
 async def familiar_photo(job_id: str, request: Request) -> dict:
     """How unlike the training photos a photo is, and the closest ones."""
     data = await _read_upload(request)
-    try:
-        return await run_in_threadpool(familiar.check_photo, job_id, data)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(familiar.check_photo, job_id, data)
 
 
 @app.post("/api/models/{job_id}/familiar/text")
 def familiar_text(job_id: str, request: TextToTry) -> dict:
-    try:
-        return familiar.check_text(job_id, request.text)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return familiar.check_text(job_id, request.text)
 
 
 @app.get("/api/models/{job_id}/familiar/photos/{index}")
 def familiar_nearest_photo(job_id: str, index: int) -> FileResponse:
-    try:
-        path = familiar.nearest_photo(job_id, index)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    path = familiar.nearest_photo(job_id, index)
     return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/models/{job_id}/explain")
 def explain_text_model(job_id: str, request: TextToTry) -> dict:
     """The model's answers, and how much each word pushed it toward the top one."""
-    try:
-        return explaining.explain_text(job_id, request.text)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return explaining.explain_text(job_id, request.text)
 
 
 @app.get("/api/models/{job_id}/mistakes")
 def text_model_mistakes(job_id: str) -> dict:
-    return _dataset_reply(textmodels.mistakes, job_id)
+    return textmodels.mistakes(job_id)
 
 
 # --------------------------------------------------------------------- sound
@@ -980,50 +868,41 @@ def text_model_mistakes(job_id: str) -> dict:
 async def add_sound(dataset_id: str, request: Request, category: str = Query(min_length=1, max_length=200)) -> dict:
     """Adds a WAV recording to a category, cut into 1-second clips."""
     data = await _read_upload(request, sounds.MAX_SOUND_BYTES)
-    try:
-        return await run_in_threadpool(sounds.add_recording, category, data, dataset_id)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(sounds.add_recording, category, data, dataset_id)
 
 
 @app.get("/api/datasets/{dataset_id}/sounds")
 def list_sounds(dataset_id: str, category: str = Query(min_length=1, max_length=200)) -> dict:
-    return _dataset_reply(sounds.clips, dataset_id, category)
+    return sounds.clips(dataset_id, category)
 
 
 @app.get("/api/datasets/{dataset_id}/sounds/{clip_id}")
 def sound_file(dataset_id: str, clip_id: str, category: str = Query(min_length=1, max_length=200)) -> FileResponse:
-    path = _dataset_reply(sounds.clip_file, dataset_id, category, clip_id)
+    path = sounds.clip_file(dataset_id, category, clip_id)
     return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.delete("/api/datasets/{dataset_id}/sounds/{clip_id}")
 def remove_sound(dataset_id: str, clip_id: str, category: str = Query(min_length=1, max_length=200)) -> dict:
-    _dataset_reply(sounds.remove_clip, dataset_id, category, clip_id)
+    sounds.remove_clip(dataset_id, category, clip_id)
     return {"ok": True}
 
 
 @app.post("/api/datasets/{dataset_id}/train-sound", dependencies=[Depends(_needs_json)])
 def train_sound_model(dataset_id: str) -> dict:
-    try:
-        return {"job": training.public(sounds.start(dataset_id))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(sounds.start(dataset_id))}
 
 
 @app.get("/api/models/{job_id}/sound-mistakes")
 def sound_mistakes(job_id: str) -> dict:
-    return _dataset_reply(sounds.mistakes, job_id)
+    return sounds.mistakes(job_id)
 
 
 @app.post("/api/models/{job_id}/listen")
 async def listen(job_id: str, request: Request, explain: bool = False) -> dict:
     """A sound model's answers for a WAV recording, its spectrogram, and with explain=true where it listened."""
     data = await _read_upload(request, sounds.MAX_SOUND_BYTES)
-    try:
-        return await run_in_threadpool(sounds.listen, job_id, data, explain)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(sounds.listen, job_id, data, explain)
 
 
 # -------------------------------------------------------------- spreadsheet models
@@ -1041,10 +920,7 @@ class RowToTry(BaseModel):
 @app.post("/api/datasets/{dataset_id}/table")
 async def upload_table(dataset_id: str, request: Request) -> dict:
     data = await _read_upload(request, tables.MAX_FILE_BYTES)
-    try:
-        return await run_in_threadpool(tables.upload, dataset_id, data)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(tables.upload, dataset_id, data)
 
 
 @app.get("/api/datasets/{dataset_id}/table/analysis")
@@ -1053,25 +929,22 @@ def analyse_table(
     target: str | None = Query(default=None, max_length=500),
     task: Literal["category", "number"] | None = None,
 ) -> dict:
-    return _dataset_reply(tables.analyse, dataset_id, target, task)
+    return tables.analyse(dataset_id, target, task)
 
 
 @app.post("/api/datasets/{dataset_id}/train-table")
 def train_table_model(dataset_id: str, request: TableTraining) -> dict:
-    try:
-        return {"job": training.public(tables.start(dataset_id, request.target, request.task, request.columns))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(tables.start(dataset_id, request.target, request.task, request.columns))}
 
 
 @app.get("/api/models/{job_id}/schema")
 def table_model_schema(job_id: str) -> dict:
-    return _dataset_reply(tables.schema, job_id)
+    return tables.schema(job_id)
 
 
 @app.post("/api/models/{job_id}/try-row")
 def try_table_model(job_id: str, request: RowToTry) -> dict:
-    return _dataset_reply(tables.try_row, job_id, request.values)
+    return tables.try_row(job_id, request.values)
 
 
 # ------------------------------------------------------------------- forecasting
@@ -1095,25 +968,22 @@ def analyse_forecast(
     horizon: int | None = Query(default=None, ge=1, le=forecast.MAX_HORIZON),
     combine: Literal["mean", "sum"] | None = None,
 ) -> dict:
-    return _dataset_reply(forecast.analyse, dataset_id, when, value, horizon, combine)
+    return forecast.analyse(dataset_id, when, value, horizon, combine)
 
 
 @app.post("/api/datasets/{dataset_id}/train-forecast")
 def train_forecast_model(dataset_id: str, request: ForecastTraining) -> dict:
-    try:
-        return {"job": training.public(forecast.start(dataset_id, request.when, request.value, request.horizon, request.combine))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(forecast.start(dataset_id, request.when, request.value, request.horizon, request.combine))}
 
 
 @app.get("/api/models/{job_id}/forecast")
 def forecast_details(job_id: str) -> dict:
-    return _dataset_reply(forecast.details, job_id)
+    return forecast.details(job_id)
 
 
 @app.post("/api/models/{job_id}/forecast-from")
 def forecast_from_values(job_id: str, request: ForecastFrom) -> dict:
-    return _dataset_reply(forecast.forecast_from, job_id, request.values)
+    return forecast.forecast_from(job_id, request.values)
 
 
 # ------------------------------------------------------------------- writing
@@ -1139,29 +1009,23 @@ class WriterAsk(BaseModel):
 
 @app.get("/api/datasets/{dataset_id}/writer/analysis")
 def analyse_writing(dataset_id: str) -> dict:
-    return _dataset_reply(writer.analyse, dataset_id)
+    return writer.analyse(dataset_id)
 
 
 @app.post("/api/datasets/{dataset_id}/train-writer", dependencies=[Depends(_needs_json)])
 def train_writer(dataset_id: str, request: WriterTraining) -> dict:
-    try:
-        return {"job": training.public(writer.start(dataset_id, request.model, request.strength, request.length))}
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return {"job": training.public(writer.start(dataset_id, request.model, request.strength, request.length))}
 
 
 @app.get("/api/models/{job_id}/writer")
 def writer_details(job_id: str) -> dict:
-    return _dataset_reply(writer.details, job_id)
+    return writer.details(job_id)
 
 
 @app.post("/api/models/{job_id}/write")
 async def write_with(job_id: str, request: WriterAsk) -> dict:
     turns = [turn.model_dump() for turn in request.history]
-    try:
-        return await run_in_threadpool(writer.ask, job_id, request.prompt, request.chat, turns, request.compare, request.seed)
-    except training.TrainingError as error:
-        raise _raise(error) from None
+    return await run_in_threadpool(writer.ask, job_id, request.prompt, request.chat, turns, request.compare, request.seed)
 
 
 # ------------------------------------------------------------------- data health
@@ -1175,14 +1039,14 @@ class HealthReview(BaseModel):
 
 @app.get("/api/datasets/{dataset_id}/health")
 def dataset_health(dataset_id: str) -> dict:
-    return _dataset_reply(health.overview, dataset_id)
+    return health.overview(dataset_id)
 
 
 @app.post("/api/datasets/{dataset_id}/health/check", dependencies=[Depends(_needs_json)])
 def start_health_check(dataset_id: str) -> dict:
-    return {"job": _dataset_reply(health.start, dataset_id)}
+    return {"job": health.start(dataset_id)}
 
 
 @app.post("/api/datasets/{dataset_id}/health/review")
 def review_health(dataset_id: str, request: HealthReview) -> dict:
-    return _dataset_reply(health.review, dataset_id, request.action, request.id, request.category, request.pair)
+    return health.review(dataset_id, request.action, request.id, request.category, request.pair)

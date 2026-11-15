@@ -2,10 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import * as api from "./api";
 import type { DatasetSummary, PredictAnswer, SavedModel, TableAnalysis, TableSchema } from "./types";
 import { SureSet } from "./SureSet";
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+import { message } from "./Ui";
 
 function plain(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });

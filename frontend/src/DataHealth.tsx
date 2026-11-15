@@ -2,10 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import type { DataHealth, DatasetSummary, HealthIssue, HealthPair } from "./types";
 import { DataCoachCard } from "./DataCoach";
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+import { message } from "./Ui";
 
 const STATE_TEXT: Record<HealthIssue["state"], string> = { open: "", fixed: "Fixed", removed: "Removed", kept: "Kept as it was" };
 

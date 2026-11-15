@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as api from "./api";
 import type { DatasetSummary, PoseAnswer, SavedModel, SureSummary, TrainingMistake } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 import { CameraView, grab, useCamera } from "./Webcam";
 import { ModelApp } from "./ModelApp";
 import { SureSet } from "./SureSet";
@@ -22,10 +22,6 @@ const BODY_LINES: [number, number][] = [
   [11, 12], [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19], [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
   [11, 23], [12, 24], [23, 24], [23, 25], [24, 26], [25, 27], [26, 28], [27, 29], [28, 30], [29, 31], [30, 32], [27, 31], [28, 32],
 ];
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 const what = (dataset: { points?: "body" | "hands" }) => (dataset.points === "hands" ? "hands" : "body");
 

@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import * as api from "./api";
 import type { DatasetSummary, ForecastAnalysis, ForecastDetails, SavedModel } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 
 const WIDTH = 620;
 const HEIGHT = 250;
 const MARGIN = { top: 14, right: 14, bottom: 30, left: 56 };
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 export function plain(value: number) {
   const size = Math.abs(value);

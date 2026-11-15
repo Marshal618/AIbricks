@@ -184,10 +184,7 @@ def _job(job_id: str, where: str = "a web page", made: str = "an app") -> traini
     job = training.stored(job_id)
     if job.task not in ("image", "pose", "detect", "outline"):
         raise TrainingError(422, f"{made[0].upper()}{made[1:]} can only be made from a photo, pose, outlining or fast find-things model for now.")
-    if job.status == "running":
-        raise TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise TrainingError(409, "This run didn't save a model.")
+    training.finished(job)
     if job.task == "detect" and _detect_settings(job).get("detector", "accurate") != "fast":
         raise TrainingError(422, f"The accurate detector is too big and slow for {where}. Train again with the fast detector to make {made}.")
     return job

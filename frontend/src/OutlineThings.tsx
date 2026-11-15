@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import * as api from "./api";
 import type { Box, BoxedPhoto, DatasetSummary, FoundOutlines, OutlineMetrics, OutlinedPhoto, SavedModel } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 import { CameraView, grab, useCamera } from "./Webcam";
 import { ShapePhotoAdder, colourOf, plural } from "./Find";
 import { ModelApp } from "./ModelApp";
@@ -13,10 +13,6 @@ const STRIP_LIMIT = 80;
 const CLOSE_ENOUGH = 0.02;
 
 type Point = [number, number];
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function percent(value: number | null | undefined) {
   return value === null || value === undefined ? "–" : `${Math.round(value * 100)}%`;

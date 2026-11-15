@@ -7,7 +7,6 @@ train.py and predict.py do the work, so the downloaded project behaves the same 
 from __future__ import annotations
 
 import json
-import subprocess
 
 from . import codegen, datasets, labelling, training, versions
 from .training import TrainingError
@@ -298,23 +297,8 @@ def _text_job(job_id: str) -> training.Job:
 
 def try_text(job_id: str, text: str) -> list[dict]:
     job = _text_job(job_id)
-    if job.status == "running":
-        raise TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise TrainingError(409, "This model's file is no longer saved.")
-    folder = training._folder(job)
-    try:
-        with training._predictions:
-            done = subprocess.run(
-                training._python_command("predict.py", "--json"), cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
-                input=text, capture_output=True, text=True, errors="replace", timeout=training.PREDICT_LIMIT_SECONDS,
-            )
-    except subprocess.TimeoutExpired:
-        raise TrainingError(504, "The model took too long to answer.") from None
-    if done.returncode != 0:
-        lines = [line for line in done.stderr.splitlines() if line.strip()]
-        raise TrainingError(500, lines[-1][:600] if lines else "The model could not read this text.")
-    return json.loads(done.stdout.strip().splitlines()[-1])
+    training.finished(job)
+    return training.run_model(training._folder(job), training._python_command("predict.py", "--json"), "The model could not read this text.", text)
 
 
 def mistakes(job_id: str) -> dict:
