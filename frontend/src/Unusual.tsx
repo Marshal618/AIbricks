@@ -2,15 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import * as api from "./api";
 import { ExplainablePhoto } from "./Explain";
 import type { DatasetSummary, SavedModel } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 import { WebcamTry } from "./Webcam";
 
 export const UNUSUAL_MINIMUM = 10;
 export const UNUSUAL_SUGGESTED = 30;
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 /** What to put in each category, said once at the top of Add data. */
 export function UnusualGuide({ dataset }: { dataset: DatasetSummary }) {

@@ -1,13 +1,9 @@
 import { useEffect, useState } from "react";
 import * as api from "./api";
 import type { FamiliarCheck, FamiliarStatus } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 
 const WAIT_MS = 1500;
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 /** Says when a tried photo or text is unlike anything the model learned from, and shows the closest ones. */
 export function FamiliarNote({ jobId, file, text, beginner }: { jobId: string; file?: File | null; text?: string; beginner: boolean }) {

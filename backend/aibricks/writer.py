@@ -380,10 +380,7 @@ def _writer_job(job_id: str) -> training.Job:
     job = training.stored(job_id)
     if job.task != "writer":
         raise TrainingError(404, "That model doesn't write.")
-    if job.status == "running":
-        raise TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise TrainingError(409, "This model's file is no longer saved.")
+    training.finished(job)
     return job
 
 

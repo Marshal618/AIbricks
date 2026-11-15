@@ -1,10 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
 import type { ModelCard, ModelComparison, SavedModel } from "./types";
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+import { message } from "./Ui";
 
 function label(model: SavedModel) {
   const date = new Date(model.startedAt * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });

@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import * as api from "./api";
 import type { ChatTurn, DatasetSummary, SavedModel, WriterAnalysis } from "./types";
-import { Why } from "./Ui";
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+import { message, Why } from "./Ui";
 
 function percent(value: number | undefined) {
   return `${Math.round((value ?? 0) * 100)}%`;

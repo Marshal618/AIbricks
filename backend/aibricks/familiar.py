@@ -173,10 +173,7 @@ def _job(job_id: str) -> training.Job:
     held = training.held_out(job)
     if job.task == "image" and held is not None and held.get("task") != "category":
         raise TrainingError(422, "This check is for photo and text sorters.")  # a model that gives a number or rebuilds photos
-    if job.status == "running":
-        raise TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise TrainingError(409, "This run didn't save a model.")
+    training.finished(job)
     return job
 
 

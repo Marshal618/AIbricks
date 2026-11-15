@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import type { CoachPoint, CoachResult, DataCoach, DatasetSummary } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 
 const WIDTH = 620;
 const HEIGHT = 230;
 const MARGIN = { top: 14, right: 14, bottom: 30, left: 44 };
 const SHOWN_NEXT = 12;
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 const range = (point: CoachPoint) => point.low != null && point.high != null && Math.round(point.low * 100) !== Math.round(point.high * 100)

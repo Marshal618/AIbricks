@@ -816,13 +816,37 @@ def fix_mistake(job_id: str, index: int, action: str, category: str | None = Non
         return job
 
 
-def _trained(job_id: str) -> Job:
-    job = _require(job_id)
+def finished(job: Job) -> Job:
+    """The run, if it has a trained model to use."""
     if job.status == "running":
         raise TrainingError(409, "This model is still training.")
     if not job.hasModel:
-        raise TrainingError(409, "This run didn't save a model.")
+        raise TrainingError(409, "This model's file is no longer saved." if job.modelRemoved else "This run didn't save a model.")
     return job
+
+
+def _trained(job_id: str) -> Job:
+    return finished(_require(job_id))
+
+
+def run_model(folder: Path, command: list[str], fallback: str, input: str | None = None, status: int = 500):
+    """Runs a model script in its folder, one at a time, and returns the JSON on its last line of output.
+
+    A failure raises the script's last error line, or the fallback message if it printed none.
+    """
+    try:
+        with _predictions:
+            done = subprocess.run(
+                command, cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": "2"}, input=input,
+                stdin=subprocess.DEVNULL if input is None else None, capture_output=True, text=True, errors="replace",
+                timeout=PREDICT_LIMIT_SECONDS,
+            )
+    except subprocess.TimeoutExpired:
+        raise TrainingError(504, "The model took too long to answer.") from None
+    if done.returncode != 0:
+        lines = [line for line in done.stderr.splitlines() if line.strip()]
+        raise TrainingError(status, lines[-1][:600] if lines else fallback)
+    return json.loads(done.stdout.strip().splitlines()[-1])
 
 
 def predict(job_id: str, data: bytes) -> list[dict]:
@@ -834,19 +858,9 @@ def predict(job_id: str, data: bytes) -> list[dict]:
     picture = folder / f"try-{uuid.uuid4().hex}{extension}"
     picture.write_bytes(data)
     try:
-        with _predictions:
-            done = subprocess.run(
-                _python_command("predict.py", picture.name, "--json"), cwd=folder, env=_environment(folder) | {"OMP_NUM_THREADS": "2"},
-                stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace", timeout=PREDICT_LIMIT_SECONDS,
-            )
-    except subprocess.TimeoutExpired:
-        raise TrainingError(504, "The model took too long to answer.") from None
+        return run_model(folder, _python_command("predict.py", picture.name, "--json"), "The model could not read this image.")[0]["answers"]
     finally:
         picture.unlink(missing_ok=True)
-    if done.returncode != 0:
-        lines = [line for line in done.stderr.splitlines() if line.strip()]
-        raise TrainingError(500, lines[-1][:600] if lines else "The model could not read this image.")
-    return json.loads(done.stdout.strip().splitlines()[-1])[0]["answers"]
 
 
 # ------------------------------------------------------------------ live predictions
@@ -1021,10 +1035,7 @@ def bundle(job_id: str, target: Path, credits: str | None = None, card: str | No
     import zipfile
 
     job = stored(job_id)
-    if job.status == "running":
-        raise TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise TrainingError(409, "This run didn't save a model.")
+    finished(job)
     folder = _folder(job)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in job.files:

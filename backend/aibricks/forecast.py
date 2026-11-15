@@ -14,7 +14,6 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import math
-import subprocess
 
 import numpy as np
 
@@ -749,10 +748,7 @@ def _forecast_job(job_id: str) -> training.Job:
     job = training.stored(job_id)
     if job.task != "forecast":
         raise TrainingError(404, "That model doesn't forecast.")
-    if job.status == "running":
-        raise TrainingError(409, "This model is still training.")
-    if not job.hasModel:
-        raise TrainingError(409, "This model's file is no longer saved.")
+    training.finished(job)
     return job
 
 
@@ -769,16 +765,7 @@ def forecast_from(job_id: str, values: list[float]) -> dict:
     job = _forecast_job(job_id)
     if not values or any(not math.isfinite(value) for value in values):
         raise TrainingError(422, "Give a list of numbers to forecast from.")
-    folder = training._folder(job)
-    try:
-        with training._predictions:
-            done = subprocess.run(
-                training._python_command("predict.py", "--json"), cwd=folder, env=training._environment(folder) | {"OMP_NUM_THREADS": "2"},
-                input=json.dumps({"values": values}), capture_output=True, text=True, errors="replace", timeout=training.PREDICT_LIMIT_SECONDS,
-            )
-    except subprocess.TimeoutExpired:
-        raise TrainingError(504, "The model took too long to answer.") from None
-    if done.returncode != 0:
-        lines = [line for line in done.stderr.splitlines() if line.strip()]
-        raise TrainingError(422, lines[-1][:600] if lines else "The model couldn't forecast from these numbers.")
-    return json.loads(done.stdout.strip().splitlines()[-1])
+    return training.run_model(
+        training._folder(job), training._python_command("predict.py", "--json"), "The model couldn't forecast from these numbers.",
+        json.dumps({"values": values}), status=422,
+    )

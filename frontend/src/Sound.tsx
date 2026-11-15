@@ -3,6 +3,7 @@ import * as api from "./api";
 import { HeatmapOverlay } from "./Explain";
 import type { DatasetSummary, Grid, Heatmap, SavedModel, SoundAnswer, SoundMistake } from "./types";
 import { SureSet } from "./SureSet";
+import { message } from "./Ui";
 
 const RATE = 16000;
 const KEPT_SECONDS = 3;
@@ -11,10 +12,6 @@ const BACKGROUND_SECONDS = 20;
 const LISTEN_EVERY_MS = 400;
 export const SOUND_MINIMUM = 4;
 export const SOUND_SUGGESTED = 20;
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function micProblem(error: unknown) {
   const name = error instanceof DOMException ? error.name : "";

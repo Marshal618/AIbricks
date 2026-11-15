@@ -8,7 +8,7 @@ import { TrainingCheck } from "./TrainingCheck";
 import { UnusualLine, UnusualTrainer, UnusualTry } from "./Unusual";
 import { FindResults, FindTrainer, FindTry } from "./Find";
 import { OutlineResults, OutlineTrainer, OutlineTry } from "./OutlineThings";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 import { ClipPreview, SoundMistakes, SoundTrainer, SoundTry } from "./Sound";
 import { PoseResults, PoseTrainer, PoseTry } from "./Pose";
 import { CompareModels, ModelCardView } from "./ModelInsights";
@@ -21,10 +21,6 @@ import { SureSet } from "./SureSet";
 import { FamiliarNote } from "./Familiar";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function when(seconds: number) {
   return new Date(seconds * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });

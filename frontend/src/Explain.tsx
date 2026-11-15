@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "./api";
 import type { Heatmap, TextExplanation } from "./types";
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+import { message } from "./Ui";
 
 /**
  * Draws where the model looked over a photo: what it ignored is dimmed, and what it used glows amber.

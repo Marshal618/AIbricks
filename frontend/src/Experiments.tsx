@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import type { DatasetSummary, Experiment, ExperimentEffect, ExperimentOption, GraphPayload } from "./types";
-import { Why } from "./Ui";
+import { message, Why } from "./Ui";
 
 const POLL_MS = 1500;
 const ROUND_ONE = ["start", "augment", "wider", "pretrained", "slower"];
-
-function message(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function percent(value: number | null) {
   return value === null ? "–" : `${Math.round(value * 100)}%`;
