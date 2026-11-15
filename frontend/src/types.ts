@@ -828,3 +828,21 @@ export interface SureSummary {
   examples: number;
   levels: Record<string, { cutoff: number; right: number; size: number; single: number }>;
 }
+
+export interface FamiliarStatus {
+  status: "missing" | "building" | "ready" | "failed";
+  error: string | null;
+  known?: number;
+  held?: number;
+  usual?: number;
+  canWarn?: boolean;
+}
+
+export interface FamiliarCheck {
+  unfamiliar: boolean;
+  farther: number;
+  pValue: number;
+  level: number;
+  usual: number;
+  nearest: { index: number; id: string; category: string; similarity: number; text?: string | null }[];
+}

@@ -392,6 +392,19 @@ file and opened on another computer. Files contain the design only, not data or 
   needs enough of them: 4 for 8 in 10, 9 for 9 in 10 and 19 for 19 in 20. In our tests on handwritten
   digits, sets aimed at 9 in 10 held the right answer 92% of the time on new examples, and at 19 in 20,
   94.5%. It holds for new examples that are like the ones you trained on.
+- **Is this like what it learned from?** A model always picks one of its answers, even for something
+  it has never seen. When you try a photo or text on a sorter, it also says whether it looks like what
+  the model learned from. If it doesn't, you get a warning and the closest examples it did learn from.
+  A ready-made model (ResNet-18 for photos, MiniLM for text) describes each example. The distance is
+  how far a new one is from its 5th closest training example (deep nearest neighbours, Sun et al.,
+  2022). The warning shows when it's farther than 19 in 20 of the held-back examples, and of the
+  training examples each measured against the others (conformal p-values, Bates et al., 2023). So
+  about 1 ordinary example in 20 gets a warning it didn't need. It needs about 20 examples in all. In
+  our tests on a planes, cars and ships model with 120 training photos, it warned about 4% of new
+  vehicle photos, all random-noise photos and handwritten digits, and about two thirds of cat
+  and dog photos. Text is harder to tell apart: with 400 news posts about space, cars and medicine, it
+  warned about 84% of short everyday messages and about half of posts on other topics. The first try
+  takes a little longer while it describes the training examples.
 - **Mistakes.** After training, you see the held-back examples the model got wrong, most confident
   first: on the Model builder's **Train** step for photo models, and on the dataset's **Train** tab
   for the others. Move any that are filed in the wrong category, or remove them.
@@ -512,7 +525,7 @@ pretrained models into `backend/.test-cache/`.
   test in a separate, time-limited process; `projects.py` stores saved designs.
 - Data: `datasets.py` stores datasets and categories; `labelling.py` stores unsorted photos and text
   and makes label suggestions; `versions.py` keeps versions; `opendata.py` imports open datasets;
-  `health.py` and `health_check.py` give levels and run the label check. `coach.py` and `coach_check.py` run the data coach. `sure.py` works out sure sets.
+  `health.py` and `health_check.py` give levels and run the label check. `coach.py` and `coach_check.py` run the data coach. `sure.py` works out sure sets. `familiar.py` warns about photos and text unlike the training examples.
 - Training: `training.py` runs training and predictions in separate processes; `experiments.py` runs
   Find a better model; `augment.py` varies training photos; `checkup.py` makes the training check.
 - Kinds of model: `finder.py` finds things in photos, with `namefinder.py` (OWLv2) suggesting boxes from names; `outline.py` outlines things, with MobileSAM

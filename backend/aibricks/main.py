@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer, namefinder, coach
+from . import anomaly, augment, finder, poses, cards, catalogue, explain as explaining, code_parser, codegen, compare as comparing, datasets, graph as graphs, labelling, opendata, health, projects, runner, slices, sounds, experiments, system, tables, textmodels, training, versions, webapp, pi, outline, forecast, writer, namefinder, coach, familiar
 
 
 @contextlib.asynccontextmanager
@@ -914,6 +914,50 @@ def try_text_model(job_id: str, request: TextToTry) -> dict:
         return {"answers": textmodels.try_text(job_id, request.text)}
     except training.TrainingError as error:
         raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/familiar")
+def familiar_status(job_id: str) -> dict:
+    """Whether the check for unfamiliar photos or text is ready for this model."""
+    try:
+        return familiar.status(job_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.post("/api/models/{job_id}/familiar", dependencies=[Depends(_needs_json)])
+def prepare_familiar(job_id: str) -> dict:
+    try:
+        return familiar.start(job_id)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.post("/api/models/{job_id}/familiar/photo")
+async def familiar_photo(job_id: str, request: Request) -> dict:
+    """How unlike the training photos a photo is, and the closest ones."""
+    data = await _read_upload(request)
+    try:
+        return await run_in_threadpool(familiar.check_photo, job_id, data)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.post("/api/models/{job_id}/familiar/text")
+def familiar_text(job_id: str, request: TextToTry) -> dict:
+    try:
+        return familiar.check_text(job_id, request.text)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+
+
+@app.get("/api/models/{job_id}/familiar/photos/{index}")
+def familiar_nearest_photo(job_id: str, index: int) -> FileResponse:
+    try:
+        path = familiar.nearest_photo(job_id, index)
+    except training.TrainingError as error:
+        raise _raise(error) from None
+    return FileResponse(path, headers={"Cross-Origin-Resource-Policy": "same-origin", "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/models/{job_id}/explain")

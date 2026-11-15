@@ -18,6 +18,7 @@ import { ForecastResult, ForecastTrainer } from "./ForecastModels";
 import { WriterResult, WriterTrainer } from "./Writer";
 import type { DatasetPreview, DatasetSummary, GraphPayload, PredictAnswer, SavedModel, TextMistake, VersionChanges, VersionOverview } from "./types";
 import { SureSet } from "./SureSet";
+import { FamiliarNote } from "./Familiar";
 
 const LICENCES = ["CC0", "CC BY 4.0", "CC BY-SA 4.0", "MIT", "Apache 2.0", "Private, not for sharing"];
 
@@ -356,6 +357,7 @@ function TryText({ model, beginner }: { model: SavedModel; beginner: boolean }) 
         </ul>
       )}
       {answers && <SureSet answers={answers} sure={model.sure} beginner={beginner} />}
+      {answers && <FamiliarNote jobId={model.id} text={asked} beginner={beginner} />}
       {answers && <div className="field-note"><ExplainableText key={asked} jobId={model.id} text={asked} beginner={beginner} /></div>}
     </section>
   );
